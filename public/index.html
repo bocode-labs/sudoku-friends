@@ -60,9 +60,22 @@
       </section>
 
       <aside id="scores" class="scores">
-        <h2>Progress</h2>
+        <h2>Leaderboard</h2>
         <div id="scoreList"></div>
       </aside>
+
+      <div id="finishOverlay" class="finish-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finishTitle">
+        <div class="confetti" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="finish-dialog">
+          <p class="eyebrow">Solved</p>
+          <h2 id="finishTitle">Board complete</h2>
+          <p id="finishMessage" class="muted"></p>
+          <button id="dismissFinish" type="button">Close</button>
+        </div>
+      </div>
     </main>
 
     <script>

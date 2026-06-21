@@ -2,7 +2,7 @@ import express from 'express';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDatabase, deserialize, SCORE_TOTAL, serialize } from './db.js';
+import { createDatabase, deserialize, serialize } from './db.js';
 import { DIFFICULTIES, generatePuzzle, isCompleteAndCorrect } from './sudoku.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -121,31 +121,48 @@ function createRoutes({ db, streams }) {
     const cell = Number(req.body?.cell);
     const value = Number(req.body?.value);
     const puzzle = deserialize(game.puzzle);
-    if (!Number.isInteger(cell) || cell < 0 || cell > 80 || !Number.isInteger(value) || value < 1 || value > 9) {
-      return res.status(400).json({ error: 'Move must include cell 0-80 and value 1-9' });
+    if (!Number.isInteger(cell) || cell < 0 || cell > 80 || !Number.isInteger(value) || value < 0 || value > 9) {
+      return res.status(400).json({ error: 'Move must include cell 0-80 and value 0-9' });
     }
     if (puzzle[cell] !== 0) {
       return res.status(409).json({ error: 'Cannot edit a given cell' });
     }
 
     const board = deserialize(player.board);
+    if (player.correct) {
+      return res.status(409).json({ error: 'Solved boards are locked' });
+    }
     board[cell] = value;
     const solution = deserialize(game.solution);
     const complete = board.every((boardValue) => boardValue !== 0);
     const correct = complete ? isCompleteAndCorrect(board, solution) : undefined;
-    const score = calculateScore(board, puzzle, correct);
+    const completedAt = complete && correct && !player.completed_at ? timestamp() : player.completed_at;
+    const finishPoints =
+      complete && correct && !player.correct ? calculateFinishPoints(db, game.id, completedAt) : player.finish_points;
 
-    db.prepare(
-      'update players set board = ?, score = ?, completed = ?, correct = ? where id = ?'
-    ).run(serialize(board), score, complete ? 1 : 0, correct === undefined ? null : correct ? 1 : 0, player.id);
-    db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(player.id, cell, value);
+    const saveMove = db.transaction(() => {
+      db.prepare(
+        'update players set board = ?, score = ?, finish_points = ?, completed = ?, correct = ?, completed_at = ? where id = ?'
+      ).run(
+        serialize(board),
+        progressFor(board, puzzle).filled,
+        finishPoints,
+        complete ? 1 : 0,
+        correct === undefined ? null : correct ? 1 : 0,
+        completedAt,
+        player.id
+      );
+      db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(player.id, cell, value);
+      awardMilestones(db, game.id, player.id, board, solution, cell, value);
+    });
+    saveMove();
 
     broadcast(streams, db, game.code);
 
     const body = {
       accepted: true,
       complete,
-      progress: { filled: score, total: SCORE_TOTAL }
+      progress: progressFor(board, puzzle)
     };
     if (complete) {
       body.correct = correct;
@@ -203,15 +220,35 @@ function snapshot(db, code, playerId) {
   }
 
   const players = db
-    .prepare('select id, name, score, completed, correct from players where game_id = ? order by joined_at asc')
+    .prepare(
+      'select id, name, board, finish_points, completed, correct, completed_at, joined_at from players where game_id = ? order by joined_at asc'
+    )
     .all(game.id)
-    .map((player) => ({
-      id: player.id,
-      name: player.name,
-      progress: { filled: player.score, total: SCORE_TOTAL },
-      completed: Boolean(player.completed),
-      correct: player.correct === null ? null : Boolean(player.correct)
-    }));
+    .map((player) => {
+      const awards = db
+        .prepare('select type, unit, points, awarded_at as awardedAt from event_awards where player_id = ? order by awarded_at asc, id asc')
+        .all(player.id);
+      const awardPoints = awards.reduce((total, award) => total + award.points, 0);
+      return {
+        id: player.id,
+        name: player.name,
+        progress: progressFor(deserialize(player.board), deserialize(game.puzzle)),
+        timer: timerFor(game.started_at, player.completed_at, game.status),
+        points: player.finish_points + awardPoints,
+        finishPoints: player.finish_points,
+        finishRank: finishRank(db, game.id, player.id),
+        awards,
+        completed: Boolean(player.completed),
+        correct: player.correct === null ? null : Boolean(player.correct)
+      };
+    })
+    .sort((left, right) => {
+      if (right.points !== left.points) return right.points - left.points;
+      if (left.finishRank && right.finishRank) return left.finishRank - right.finishRank;
+      if (left.finishRank) return -1;
+      if (right.finishRank) return 1;
+      return right.progress.percent - left.progress.percent;
+    });
 
   const player = playerId
     ? db.prepare('select id, board from players where id = ? and game_id = ?').get(playerId, game.id)
@@ -229,9 +266,107 @@ function snapshot(db, code, playerId) {
   };
 }
 
-function calculateScore(board, puzzle, correct) {
-  const entered = board.reduce((total, value, index) => total + (puzzle[index] === 0 && value !== 0 ? 1 : 0), 0);
-  return entered + (correct ? 10 : 0);
+function progressFor(board, puzzle) {
+  const total = puzzle.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
+  const filled = board.reduce((count, value, index) => count + (puzzle[index] === 0 && value !== 0 ? 1 : 0), 0);
+  return {
+    filled,
+    total,
+    percent: total === 0 ? 100 : Math.floor((filled / total) * 100)
+  };
+}
+
+function timerFor(startedAt, completedAt, status) {
+  if (!startedAt || status !== 'playing') {
+    return { elapsedSeconds: 0, finished: false };
+  }
+  const end = completedAt || timestamp();
+  return {
+    elapsedSeconds: Math.max(0, Math.floor((parseTimestamp(end) - parseTimestamp(startedAt)) / 1000)),
+    finished: Boolean(completedAt)
+  };
+}
+
+function calculateFinishPoints(db, gameId, completedAt) {
+  const finishers = db
+    .prepare(
+      'select completed_at from players where game_id = ? and correct = 1 and completed_at is not null order by completed_at asc'
+    )
+    .all(gameId);
+  const rank = finishers.length + 1;
+  if (rank === 1) {
+    return 100;
+  }
+  const firstCompletedAt = finishers[0].completed_at;
+  const minutesLater = Math.floor((parseTimestamp(completedAt) - parseTimestamp(firstCompletedAt)) / 60000);
+  return Math.max(0, 100 - 20 * (rank - 1) - minutesLater);
+}
+
+function finishRank(db, gameId, playerId) {
+  const finishers = db
+    .prepare(
+      'select id from players where game_id = ? and correct = 1 and completed_at is not null order by completed_at asc, joined_at asc'
+    )
+    .all(gameId);
+  const index = finishers.findIndex((player) => player.id === playerId);
+  return index === -1 ? null : index + 1;
+}
+
+function awardMilestones(db, gameId, playerId, board, solution, cell, value) {
+  if (value === 0 || board[cell] !== solution[cell]) {
+    return;
+  }
+
+  const row = Math.floor(cell / 9);
+  const col = cell % 9;
+  const box = Math.floor(row / 3) * 3 + Math.floor(col / 3);
+  const digit = solution[cell];
+  const awards = [
+    { type: 'row', unit: 0, points: 20, indices: indicesForRow(row) },
+    { type: 'column', unit: 0, points: 20, indices: indicesForColumn(col) },
+    { type: 'box', unit: 0, points: 20, indices: indicesForBox(box) },
+    { type: 'digit', unit: digit, points: 10, indices: indicesForDigit(solution, digit) }
+  ];
+
+  for (const award of awards) {
+    if (award.indices.every((index) => board[index] === solution[index])) {
+      db.prepare(
+        'insert or ignore into event_awards (game_id, player_id, type, unit, points) values (?, ?, ?, ?, ?)'
+      ).run(gameId, playerId, award.type, award.unit, award.points);
+    }
+  }
+}
+
+function indicesForRow(row) {
+  return Array.from({ length: 9 }, (_, index) => row * 9 + index);
+}
+
+function indicesForColumn(column) {
+  return Array.from({ length: 9 }, (_, index) => index * 9 + column);
+}
+
+function indicesForBox(box) {
+  const startRow = Math.floor(box / 3) * 3;
+  const startCol = (box % 3) * 3;
+  const indices = [];
+  for (let dr = 0; dr < 3; dr += 1) {
+    for (let dc = 0; dc < 3; dc += 1) {
+      indices.push((startRow + dr) * 9 + startCol + dc);
+    }
+  }
+  return indices;
+}
+
+function indicesForDigit(solution, digit) {
+  return solution.map((value, index) => (value === digit ? index : -1)).filter((index) => index >= 0);
+}
+
+function timestamp(date = new Date()) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function parseTimestamp(value) {
+  return new Date(`${value.replace(' ', 'T')}Z`);
 }
 
 function findGame(db, code) {

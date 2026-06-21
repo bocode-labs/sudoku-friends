@@ -7,7 +7,8 @@ const state = {
   playerId: '',
   selected: null,
   snapshot: null,
-  events: null
+  events: null,
+  timerTick: null
 };
 
 const el = {
@@ -28,7 +29,10 @@ const el = {
   board: document.querySelector('#board'),
   numbers: document.querySelector('#numbers'),
   result: document.querySelector('#result'),
-  toggleScores: document.querySelector('#toggleScores')
+  toggleScores: document.querySelector('#toggleScores'),
+  finishOverlay: document.querySelector('#finishOverlay'),
+  finishMessage: document.querySelector('#finishMessage'),
+  dismissFinish: document.querySelector('#dismissFinish')
 };
 
 for (let value = 1; value <= 9; value += 1) {
@@ -38,6 +42,14 @@ for (let value = 1; value <= 9; value += 1) {
   button.addEventListener('click', () => submitValue(value));
   el.numbers.append(button);
 }
+
+const deleteButton = document.createElement('button');
+deleteButton.type = 'button';
+deleteButton.className = 'delete-number';
+deleteButton.setAttribute('aria-label', 'Remove selected number');
+deleteButton.textContent = '⌫';
+deleteButton.addEventListener('click', () => submitValue(0));
+el.numbers.append(deleteButton);
 
 el.createGame.addEventListener('click', async () => {
   const res = await api('/api/games', {
@@ -79,6 +91,10 @@ el.toggleScores.addEventListener('click', () => {
   el.scores.classList.toggle('hidden-local');
 });
 
+el.dismissFinish.addEventListener('click', () => {
+  hide(el.finishOverlay);
+});
+
 renderRoute();
 
 async function renderRoute() {
@@ -118,6 +134,8 @@ function renderSnapshot() {
   el.waitingText.classList.toggle('hidden', snapshot.game.status !== 'lobby' || isHost);
   document.querySelector('#joinForm').classList.toggle('hidden', hasPlayer);
   renderScores(snapshot.players);
+  maybeShowFinishDialog(snapshot);
+  updateTimerTick(snapshot.game.status === 'playing');
 
   if (snapshot.game.status !== 'playing') {
     show(el.lobbyView);
@@ -157,13 +175,55 @@ function renderScores(players) {
   el.scoreList.replaceChildren();
   for (const player of players) {
     const row = document.createElement('div');
-    row.className = 'score-row';
-    const status = player.completed ? (player.correct ? 'correct' : 'full') : '';
-    row.innerHTML = `<strong></strong><span></span>`;
-    row.querySelector('strong').textContent = player.name;
-    row.querySelector('span').textContent = `${player.progress.filled}/${player.progress.total} ${status}`.trim();
+    row.className = `score-row${player.id === state.playerId ? ' is-current' : ''}`;
+
+    const header = document.createElement('div');
+    header.className = 'score-header';
+
+    const name = document.createElement('strong');
+    name.textContent = player.name;
+
+    const status = document.createElement('span');
+    status.className = player.correct ? 'status solved' : 'status';
+    status.textContent = player.correct ? 'Solved' : player.completed ? 'Full' : `${player.progress.percent}%`;
+
+    header.append(name, status);
+
+    const progress = document.createElement('div');
+    progress.className = 'score-progress';
+    progress.setAttribute('aria-label', `${player.name} progress ${player.progress.percent}%`);
+    const bar = document.createElement('span');
+    bar.style.width = `${player.progress.percent}%`;
+    progress.append(bar);
+
+    const meta = document.createElement('div');
+    meta.className = 'score-meta';
+    meta.append(
+      metaItem('Filled', `${player.progress.filled}/${player.progress.total}`),
+      metaItem('Time', formatDuration(player.timer?.elapsedSeconds || 0)),
+      metaItem('Points', String(player.points || 0))
+    );
+
+    if (player.correct) {
+      const rank = document.createElement('div');
+      rank.className = 'score-rank';
+      rank.textContent = player.finishRank ? `#${player.finishRank} correct` : 'Correct';
+      row.append(header, progress, meta, rank);
+    } else {
+      row.append(header, progress, meta);
+    }
     el.scoreList.append(row);
   }
+}
+
+function metaItem(label, value) {
+  const item = document.createElement('span');
+  const labelNode = document.createElement('small');
+  labelNode.textContent = label;
+  const valueNode = document.createElement('b');
+  valueNode.textContent = value;
+  item.append(labelNode, valueNode);
+  return item;
 }
 
 async function submitValue(value) {
@@ -178,6 +238,56 @@ async function submitValue(value) {
     el.result.textContent = '';
   }
   await loadState();
+}
+
+function updateTimerTick(active) {
+  if (!active) {
+    clearTimerTick();
+    return;
+  }
+  if (state.timerTick) return;
+  state.timerTick = setInterval(async () => {
+    if (!state.snapshot || state.snapshot.game.status !== 'playing') {
+      clearTimerTick();
+      return;
+    }
+    await loadState();
+  }, 1000);
+}
+
+function clearTimerTick() {
+  if (state.timerTick) {
+    clearInterval(state.timerTick);
+    state.timerTick = null;
+  }
+}
+
+function maybeShowFinishDialog(snapshot) {
+  if (!state.playerId || !snapshot.player) return;
+  const current = snapshot.players.find((player) => player.id === state.playerId);
+  if (!current?.correct) return;
+
+  const storageKey = `sf:finishShown:${state.code}:${state.playerId}`;
+  if (localStorage.getItem(storageKey)) return;
+  localStorage.setItem(storageKey, '1');
+
+  el.finishMessage.textContent = `${formatDuration(current.timer?.elapsedSeconds || 0)} · ${current.points || 0} points`;
+  show(el.finishOverlay);
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds) || 0);
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remaining = safeSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${pad2(minutes)}:${pad2(remaining)}`;
+  }
+  return `${minutes}:${pad2(remaining)}`;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
 }
 
 async function copyShareUrl() {

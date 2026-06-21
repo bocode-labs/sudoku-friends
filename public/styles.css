@@ -7,6 +7,8 @@
   --line: #d7dde8;
   --strong: #1d4ed8;
   --strong-ink: #ffffff;
+  --good: #15803d;
+  --warm: #f59e0b;
   --board-size: min(92vw, 680px);
 }
 
@@ -197,7 +199,7 @@ h2 {
 }
 
 .cell.given {
-  background: #fff;
+  background: #f1f3f5;
   color: #000;
 }
 
@@ -209,7 +211,7 @@ h2 {
 
 .numbers {
   display: grid;
-  grid-template-columns: repeat(9, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
   width: min(var(--board-size), 100%);
 }
@@ -221,18 +223,20 @@ h2 {
   background: #0f766e;
 }
 
+.numbers .delete-number {
+  background: #374151;
+  font-size: 1.4rem;
+}
+
 .scores.hidden-local {
   display: none;
 }
 
 .score-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  gap: 8px;
   border-top: 1px solid var(--line);
   padding-top: 10px;
-  color: var(--muted);
 }
 
 .score-row:first-of-type {
@@ -242,6 +246,76 @@ h2 {
 
 .score-row strong {
   color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.score-row.is-current {
+  border-left: 3px solid var(--strong);
+  padding-left: 10px;
+}
+
+.score-header,
+.score-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.status {
+  flex: 0 0 auto;
+  min-width: 54px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.status.solved {
+  background: #dcfce7;
+  color: var(--good);
+}
+
+.score-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+.score-progress span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1d4ed8, #0f766e);
+}
+
+.score-meta span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.score-meta small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.score-meta b {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.score-rank {
+  color: var(--good);
+  font-size: 0.82rem;
+  font-weight: 800;
 }
 
 .result {
@@ -249,6 +323,91 @@ h2 {
   margin: 0;
   text-align: center;
   font-weight: 800;
+}
+
+.finish-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.46);
+}
+
+.finish-dialog {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 12px;
+  width: min(100%, 340px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 18px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
+}
+
+.finish-dialog button {
+  width: 100%;
+}
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.confetti i {
+  position: absolute;
+  top: -24px;
+  width: 10px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--warm);
+  animation: confetti-fall 1800ms ease-in forwards;
+}
+
+.confetti i:nth-child(3n) {
+  background: var(--strong);
+}
+
+.confetti i:nth-child(4n) {
+  background: #0f766e;
+}
+
+.confetti i:nth-child(5n) {
+  background: #e11d48;
+}
+
+.confetti i:nth-child(1) { left: 8%; animation-delay: 0ms; }
+.confetti i:nth-child(2) { left: 14%; animation-delay: 120ms; }
+.confetti i:nth-child(3) { left: 21%; animation-delay: 40ms; }
+.confetti i:nth-child(4) { left: 29%; animation-delay: 180ms; }
+.confetti i:nth-child(5) { left: 36%; animation-delay: 80ms; }
+.confetti i:nth-child(6) { left: 43%; animation-delay: 220ms; }
+.confetti i:nth-child(7) { left: 50%; animation-delay: 20ms; }
+.confetti i:nth-child(8) { left: 57%; animation-delay: 160ms; }
+.confetti i:nth-child(9) { left: 64%; animation-delay: 60ms; }
+.confetti i:nth-child(10) { left: 70%; animation-delay: 200ms; }
+.confetti i:nth-child(11) { left: 76%; animation-delay: 100ms; }
+.confetti i:nth-child(12) { left: 82%; animation-delay: 240ms; }
+.confetti i:nth-child(13) { left: 88%; animation-delay: 30ms; }
+.confetti i:nth-child(14) { left: 93%; animation-delay: 140ms; }
+.confetti i:nth-child(15) { left: 18%; animation-delay: 260ms; }
+.confetti i:nth-child(16) { left: 68%; animation-delay: 280ms; }
+
+@keyframes confetti-fall {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translate3d(36px, 110vh, 0) rotate(540deg);
+    opacity: 0;
+  }
 }
 
 @media (min-width: 760px) {

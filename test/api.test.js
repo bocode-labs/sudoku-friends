@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 import { createApp } from '../src/app.js';
 import { createDatabase } from '../src/db.js';
 
@@ -106,6 +107,32 @@ function get(app, path) {
   return appRequest(app, 'GET', path);
 }
 
+const SOLUTION = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9,
+  4, 5, 6, 7, 8, 9, 1, 2, 3,
+  7, 8, 9, 1, 2, 3, 4, 5, 6,
+  2, 3, 4, 5, 6, 7, 8, 9, 1,
+  5, 6, 7, 8, 9, 1, 2, 3, 4,
+  8, 9, 1, 2, 3, 4, 5, 6, 7,
+  3, 4, 5, 6, 7, 8, 9, 1, 2,
+  6, 7, 8, 9, 1, 2, 3, 4, 5,
+  9, 1, 2, 3, 4, 5, 6, 7, 8
+];
+
+function rowZeroPuzzle() {
+  return SOLUTION.map((value, index) => (index < 9 ? 0 : value));
+}
+
+function replacePuzzle(db, code, puzzle = rowZeroPuzzle(), solution = SOLUTION) {
+  const game = db.prepare('select id from games where code = ?').get(code);
+  db.prepare('update games set puzzle = ?, solution = ? where id = ?').run(
+    JSON.stringify(puzzle),
+    JSON.stringify(solution),
+    game.id
+  );
+  db.prepare('update players set board = ? where game_id = ?').run(JSON.stringify(puzzle), game.id);
+}
+
 test('creates a game, joins players, starts once, and records moves without wrong-value feedback', async () => {
   const t = makeTestApp();
   try {
@@ -123,7 +150,8 @@ test('creates a game, joins players, starts once, and records moves without wron
 
     assert.equal(beforeStart.body.game.status, 'lobby');
     assert.equal(beforeStart.body.game.puzzle, null);
-    assert.deepEqual(beforeStart.body.players[0].progress, { filled: 0, total: 91 });
+    assert.equal(beforeStart.body.players[0].progress.filled, 0);
+    assert.equal(beforeStart.body.players[0].progress.percent, 0);
 
     const start = await post(t.app, `/api/games/${created.body.game.code}/start`, {
       hostToken: created.body.game.hostToken
@@ -150,7 +178,16 @@ test('creates a game, joins players, starts once, and records moves without wron
     assert.equal(moved.body.correct, undefined);
     assert.equal(moved.body.complete, false);
     assert.equal(moved.body.progress.filled, 1);
-    assert.equal(moved.body.progress.total, 91);
+    assert.equal(moved.body.progress.total, started.body.game.puzzle.filter((value) => value === 0).length);
+
+    const removed = await post(t.app, `/api/games/${created.body.game.code}/moves`, {
+      playerId: joined.body.player.id,
+      cell: editableIndex,
+      value: 0
+    });
+    assert.equal(removed.status, 200);
+    assert.equal(removed.body.complete, false);
+    assert.equal(removed.body.progress.filled, 0);
   } finally {
     t.cleanup();
   }
@@ -196,10 +233,142 @@ test('reports correctness only when a player submits a full board', async () => 
 
     assert.equal(final.body.complete, true);
     assert.equal(final.body.correct, true);
-    assert.equal(final.body.progress.filled, emptyCells.length + 10);
-    assert.equal(final.body.progress.total, 91);
+    assert.equal(final.body.progress.filled, emptyCells.length);
+    assert.equal(final.body.progress.total, emptyCells.length);
+    assert.equal(final.body.progress.percent, 100);
   } finally {
     t.cleanup();
+  }
+});
+
+test('snapshots report editable-cell percentages, elapsed timers, finish points, and milestone awards', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const ada = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    const grace = await post(t.app, `/api/games/${code}/players`, { name: 'Grace' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+    t.db.prepare("update games set started_at = datetime('now', '-125 seconds') where code = ?").run(code);
+
+    const initial = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    assert.equal(initial.body.players[0].progress.total, 9);
+    assert.equal(initial.body.players[0].progress.percent, 0);
+    assert.ok(initial.body.players[0].timer.elapsedSeconds >= 120);
+    assert.equal(initial.body.players[0].timer.finished, false);
+
+    for (const cell of [0, 1, 2, 3]) {
+      const move = await post(t.app, `/api/games/${code}/moves`, {
+        playerId: ada.body.player.id,
+        cell,
+        value: SOLUTION[cell]
+      });
+      assert.equal(move.status, 200);
+    }
+
+    const partial = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    assert.deepEqual(partial.body.players[0].progress, { filled: 4, total: 9, percent: 44 });
+
+    for (const cell of [4, 5, 6, 7, 8]) {
+      const move = await post(t.app, `/api/games/${code}/moves`, {
+        playerId: ada.body.player.id,
+        cell,
+        value: SOLUTION[cell]
+      });
+      assert.equal(move.status, 200);
+    }
+
+    t.db
+      .prepare(
+        "update players set completed_at = datetime((select started_at from games where code = ?), '+90 seconds') where id = ?"
+      )
+      .run(code, ada.body.player.id);
+    t.db.prepare("update games set started_at = datetime('now', '-10 minutes') where code = ?").run(code);
+    t.db.prepare("update players set completed_at = datetime('now', '-5 minutes') where id = ?").run(ada.body.player.id);
+
+    for (let cell = 0; cell < 9; cell += 1) {
+      const move = await post(t.app, `/api/games/${code}/moves`, {
+        playerId: grace.body.player.id,
+        cell,
+        value: SOLUTION[cell]
+      });
+      assert.equal(move.status, 200);
+    }
+
+    const finished = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    const adaSnapshot = finished.body.players.find((player) => player.id === ada.body.player.id);
+    const graceSnapshot = finished.body.players.find((player) => player.id === grace.body.player.id);
+
+    assert.equal(adaSnapshot.completed, true);
+    assert.equal(adaSnapshot.correct, true);
+    assert.equal(adaSnapshot.finishRank, 1);
+    assert.equal(adaSnapshot.finishPoints, 100);
+    assert.equal(adaSnapshot.timer.elapsedSeconds, 300);
+    assert.equal(adaSnapshot.timer.finished, true);
+    assert.equal(adaSnapshot.points, 250);
+    assert.equal(adaSnapshot.awards.reduce((total, award) => total + award.points, 0), 150);
+    assert.ok(adaSnapshot.awards.some((award) => award.type === 'row' && award.unit === 0 && award.points === 20));
+    assert.ok(adaSnapshot.awards.some((award) => award.type === 'digit' && award.unit === 1 && award.points === 10));
+
+    assert.equal(graceSnapshot.finishRank, 2);
+    assert.equal(graceSnapshot.finishPoints, 75);
+    assert.equal(graceSnapshot.awards.length, 0);
+    assert.equal(graceSnapshot.points, 75);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('migrates existing sqlite databases with leaderboard columns and event awards table', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sudoku-friends-old-'));
+  const oldDb = new Database(join(dir, 'sudoku-friends.sqlite'));
+  oldDb.exec(`
+    create table games (
+      id integer primary key autoincrement,
+      code text not null unique,
+      host_token text not null,
+      difficulty text not null,
+      status text not null default 'lobby',
+      puzzle text not null,
+      solution text not null,
+      created_at text not null default current_timestamp,
+      started_at text
+    );
+
+    create table players (
+      id text primary key,
+      game_id integer not null references games(id) on delete cascade,
+      name text not null,
+      board text not null,
+      score integer not null default 0,
+      completed integer not null default 0,
+      correct integer,
+      joined_at text not null default current_timestamp
+    );
+
+    create table moves (
+      id integer primary key autoincrement,
+      player_id text not null references players(id) on delete cascade,
+      cell integer not null,
+      value integer not null,
+      created_at text not null default current_timestamp
+    );
+  `);
+  oldDb.close();
+  const db = createDatabase(dir);
+  try {
+    const playerColumns = db.prepare('pragma table_info(players)').all().map((column) => column.name);
+    assert.ok(playerColumns.includes('completed_at'));
+    assert.ok(playerColumns.includes('finish_points'));
+    assert.ok(db.prepare("select name from sqlite_master where type = 'table' and name = 'event_awards'").get());
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
