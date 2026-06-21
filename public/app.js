@@ -10,12 +10,6 @@ const state = {
   snapshotReceivedAt: 0,
   events: null,
   timerTick: null,
-  renderedPuzzleKey: '',
-  renderedWatchPuzzleKey: '',
-  renderedReviewPuzzleKey: '',
-  renderedBoardKey: '',
-  renderedWatchBoardKey: '',
-  renderedReviewBoardKey: '',
   localBoard: null,
   localBoardDirty: false,
   syncInFlight: false,
@@ -24,6 +18,10 @@ const state = {
   syncStatus: 'synced',
   toastTimer: null,
   watchingPlayerId: '',
+  hubTab: 'game',
+  watchMode: 'live',
+  watchReplayTimer: null,
+  watchReplayIndex: 0,
   undoHistory: [],
   confirmAction: null,
   reviewPlayerId: '',
@@ -36,9 +34,29 @@ const el = {
   createView: document.querySelector('#createView'),
   lobbyView: document.querySelector('#lobbyView'),
   playView: document.querySelector('#playView'),
-  scores: document.querySelector('#scores'),
+  gameHub: document.querySelector('#gameHub'),
+  hubGameTab: document.querySelector('#hubGameTab'),
+  hubWatchTab: document.querySelector('#hubWatchTab'),
+  hubScoreboardTab: document.querySelector('#hubScoreboardTab'),
+  hubGamePanel: document.querySelector('#hubGamePanel'),
+  hubWatchPanel: document.querySelector('#hubWatchPanel'),
+  hubScoreboardPanel: document.querySelector('#hubScoreboardPanel'),
+  hubDetailPanel: document.querySelector('#hubDetailPanel'),
+  hubGameSummary: document.querySelector('#hubGameSummary'),
+  hubWatchLocked: document.querySelector('#hubWatchLocked'),
+  hubWatchStage: document.querySelector('#hubWatchStage'),
+  hubPrevPlayer: document.querySelector('#hubPrevPlayer'),
+  hubNextPlayer: document.querySelector('#hubNextPlayer'),
+  hubWatchName: document.querySelector('#hubWatchName'),
+  hubWatchProgress: document.querySelector('#hubWatchProgress'),
+  hubWatchBoard: document.querySelector('#hubWatchBoard'),
+  hubLiveToggle: document.querySelector('#hubLiveToggle'),
+  hubResetReplay: document.querySelector('#hubResetReplay'),
+  hubPrevStep: document.querySelector('#hubPrevStep'),
+  hubPlayReplay: document.querySelector('#hubPlayReplay'),
+  hubNextStep: document.querySelector('#hubNextStep'),
   scoreList: document.querySelector('#scoreList'),
-  closeScores: document.querySelector('#closeScores'),
+  closeHub: document.querySelector('#closeHub'),
   difficulty: document.querySelector('#difficulty'),
   hostName: document.querySelector('#hostName'),
   createGame: document.querySelector('#createGame'),
@@ -59,10 +77,6 @@ const el = {
   rewindMistake: document.querySelector('#rewindMistake'),
   giveUp: document.querySelector('#giveUp'),
   toast: document.querySelector('#toast'),
-  watchView: document.querySelector('#watchView'),
-  watchPlayer: document.querySelector('#watchPlayer'),
-  watchBoard: document.querySelector('#watchBoard'),
-  watchProgress: document.querySelector('#watchProgress'),
   finishOverlay: document.querySelector('#finishOverlay'),
   finishMessage: document.querySelector('#finishMessage'),
   dismissFinish: document.querySelector('#dismissFinish'),
@@ -71,12 +85,14 @@ const el = {
   confirmMessage: document.querySelector('#confirmMessage'),
   cancelConfirm: document.querySelector('#cancelConfirm'),
   acceptConfirm: document.querySelector('#acceptConfirm'),
-  reviewPanel: document.querySelector('#reviewPanel'),
   reviewTitle: document.querySelector('#reviewTitle'),
   reviewTimeline: document.querySelector('#reviewTimeline'),
   reviewBoard: document.querySelector('#reviewBoard'),
+  detailSummary: document.querySelector('#detailSummary'),
   closeReview: document.querySelector('#closeReview'),
   playReplay: document.querySelector('#playReplay'),
+  previousReplay: document.querySelector('#previousReplay'),
+  nextReplay: document.querySelector('#nextReplay'),
   resetReplay: document.querySelector('#resetReplay')
 };
 
@@ -150,29 +166,30 @@ el.startGame.addEventListener('click', async () => {
 });
 
 el.toggleScores.addEventListener('click', () => {
-  show(el.scores);
+  openHub('scoreboard');
 });
 
-el.closeScores.addEventListener('click', () => {
-  hide(el.scores);
+el.closeHub.addEventListener('click', () => {
+  closeHub();
 });
 
-el.scores.addEventListener('click', (event) => {
-  if (event.target === el.scores) {
-    hide(el.scores);
+el.gameHub.addEventListener('click', (event) => {
+  if (event.target === el.gameHub) {
+    closeHub();
   }
 });
+
+for (const tab of [el.hubGameTab, el.hubWatchTab, el.hubScoreboardTab]) {
+  tab.addEventListener('click', () => {
+    setHubTab(tab.dataset.hubTab);
+  });
+}
 
 el.board.addEventListener('click', (event) => {
   const cell = event.target.closest('.cell');
   if (!cell || !el.board.contains(cell) || cell.disabled) return;
   state.selected = Number(cell.dataset.index);
   updateBoardSelection();
-});
-
-el.watchPlayer.addEventListener('change', () => {
-  state.watchingPlayerId = el.watchPlayer.value;
-  renderWatch();
 });
 
 el.dismissFinish.addEventListener('click', () => {
@@ -209,11 +226,21 @@ el.acceptConfirm.addEventListener('click', async () => {
 el.closeReview.addEventListener('click', () => {
   stopReplay();
   state.reviewPlayerId = '';
-  hide(el.reviewPanel);
+  setHubTab('scoreboard');
 });
 
 el.playReplay.addEventListener('click', playReplay);
+el.previousReplay.addEventListener('click', () => stepReplay(-1));
+el.nextReplay.addEventListener('click', () => stepReplay(1));
 el.resetReplay.addEventListener('click', resetReplay);
+
+el.hubPrevPlayer.addEventListener('click', () => selectWatchedPlayer(-1));
+el.hubNextPlayer.addEventListener('click', () => selectWatchedPlayer(1));
+el.hubLiveToggle.addEventListener('click', toggleWatchLive);
+el.hubResetReplay.addEventListener('click', resetWatchReplay);
+el.hubPrevStep.addEventListener('click', () => stepWatchReplay(-1));
+el.hubNextStep.addEventListener('click', () => stepWatchReplay(1));
+el.hubPlayReplay.addEventListener('click', playWatchReplay);
 
 window.addEventListener('online', () => {
   queueBoardSync({ immediate: true });
@@ -310,13 +337,13 @@ function renderSnapshot() {
   renderWaitingPlayers(snapshot.waitingPlayers || snapshot.players);
   renderScores(players);
   renderRankBadge(players);
+  renderHub();
   maybeShowFinishDialog(snapshot);
   updateTimerTick(snapshot.game.status === 'playing');
 
   if (snapshot.game.status !== 'playing') {
     show(el.lobbyView);
     hide(el.playView);
-    hide(el.watchView);
     return;
   }
 
@@ -324,7 +351,6 @@ function renderSnapshot() {
   show(el.playView);
   renderBoard(snapshot.game.puzzle, state.localBoard || snapshot.player?.board || snapshot.game.puzzle, el.board);
   renderGameActions(snapshot);
-  renderWatch();
 }
 
 function renderWaitingPlayers(players) {
@@ -355,29 +381,23 @@ function renderWaitingPlayers(players) {
   });
 }
 
-function renderBoard(puzzle, board, target) {
+function renderBoard(puzzle, board, target, { wrongCells = new Set() } = {}) {
   const puzzleKey = puzzle.join('');
-  const keyName =
-    target === el.watchBoard
-      ? 'renderedWatchPuzzleKey'
-      : target === el.reviewBoard
-        ? 'renderedReviewPuzzleKey'
-        : 'renderedPuzzleKey';
   const boardKey = board.join('');
-  const boardKeyName =
-    target === el.watchBoard
-      ? 'renderedWatchBoardKey'
-      : target === el.reviewBoard
-        ? 'renderedReviewBoardKey'
-        : 'renderedBoardKey';
-  if (state[keyName] === puzzleKey && state[boardKeyName] === boardKey && target.children.length === 81) {
+  const wrongKey = [...wrongCells].sort((left, right) => left - right).join(',');
+  if (
+    target.dataset.puzzleKey === puzzleKey &&
+    target.dataset.boardKey === boardKey &&
+    target.dataset.wrongKey === wrongKey &&
+    target.children.length === 81
+  ) {
     if (target === el.board) {
       updateBoardSelection();
     }
     return;
   }
 
-  if (state[keyName] !== puzzleKey || target.children.length !== 81) {
+  if (target.dataset.puzzleKey !== puzzleKey || target.children.length !== 81) {
     target.replaceChildren();
     board.forEach((_, index) => {
       const cell = document.createElement('button');
@@ -386,9 +406,10 @@ function renderBoard(puzzle, board, target) {
       cell.dataset.index = String(index);
       target.append(cell);
     });
-    state[keyName] = puzzleKey;
+    target.dataset.puzzleKey = puzzleKey;
   }
-  state[boardKeyName] = boardKey;
+  target.dataset.boardKey = boardKey;
+  target.dataset.wrongKey = wrongKey;
 
   board.forEach((value, index) => {
     const cell = target.children[index];
@@ -396,6 +417,7 @@ function renderBoard(puzzle, board, target) {
     cell.disabled = target !== el.board || puzzle[index] !== 0 || isCurrentPlayerLocked();
     cell.classList.toggle('given', puzzle[index] !== 0);
     cell.classList.toggle('selected', target === el.board && state.selected === index);
+    cell.classList.toggle('wrong-replay', wrongCells.has(index));
   });
   clearInvalidSelection(puzzle);
 }
@@ -481,11 +503,11 @@ function renderScores(players) {
     } else {
       row.append(badge, header, progress, meta);
     }
-    if (state.snapshot?.review?.canReview) {
+    if (canReviewSnapshot()) {
       const reviewButton = document.createElement('button');
       reviewButton.type = 'button';
       reviewButton.className = 'review-button';
-      reviewButton.textContent = 'Review';
+      reviewButton.textContent = 'Details';
       reviewButton.addEventListener('click', () => showReview(player.id));
       row.append(reviewButton);
     }
@@ -523,18 +545,102 @@ function renderGameActions(snapshot) {
   });
 }
 
+function openHub(tab = 'game') {
+  show(el.gameHub);
+  setHubTab(tab);
+}
+
+function closeHub() {
+  stopReplay();
+  stopWatchReplay();
+  hide(el.gameHub);
+}
+
+function setHubTab(tab) {
+  state.hubTab = tab;
+  if (tab !== 'watch') {
+    stopWatchReplay();
+  }
+  if (tab !== 'detail') {
+    stopReplay();
+  }
+  renderHub();
+}
+
+function renderHub() {
+  if (!state.snapshot) return;
+  const tab = state.hubTab || 'game';
+  const isDetail = tab === 'detail';
+
+  el.hubGameTab.classList.toggle('is-active', tab === 'game');
+  el.hubWatchTab.classList.toggle('is-active', tab === 'watch');
+  el.hubScoreboardTab.classList.toggle('is-active', tab === 'scoreboard' || isDetail);
+  el.hubGameTab.setAttribute('aria-selected', String(tab === 'game'));
+  el.hubWatchTab.setAttribute('aria-selected', String(tab === 'watch'));
+  el.hubScoreboardTab.setAttribute('aria-selected', String(tab === 'scoreboard' || isDetail));
+
+  el.hubGamePanel.classList.toggle('hidden', tab !== 'game');
+  el.hubWatchPanel.classList.toggle('hidden', tab !== 'watch');
+  el.hubScoreboardPanel.classList.toggle('hidden', tab !== 'scoreboard');
+  el.hubDetailPanel.classList.toggle('hidden', !isDetail);
+
+  renderGameSummary();
+  renderWatch();
+  if (isDetail && state.reviewPlayerId) {
+    renderActiveReview();
+  }
+}
+
+function renderGameSummary() {
+  const snapshot = state.snapshot;
+  const current = currentPlayer();
+  el.hubGameSummary.replaceChildren();
+
+  if (!snapshot?.game || !current) {
+    el.hubGameSummary.append(emptyState('Join this game to see your summary here.'));
+    return;
+  }
+
+  const title = document.createElement('h3');
+  title.textContent = current.correct ? 'Solved correctly' : current.gaveUp ? 'Gave up' : 'Game in progress';
+
+  const message = document.createElement('p');
+  message.className = 'muted';
+  message.textContent =
+    current.correct || current.gaveUp
+      ? 'Your result is locked in. Use Watch or Scoreboard to review the rest of the game.'
+      : 'Finish the puzzle correctly, or give up, to unlock watching and player details.';
+
+  const stats = document.createElement('div');
+  stats.className = 'summary-stats';
+  stats.append(
+    metaItem('Filled', `${current.progress.filled}/${current.progress.total}`),
+    metaItem('Progress', `${current.progress.percent}%`),
+    metaItem('Time', formatDuration(current.timer?.elapsedSeconds || 0)),
+    metaItem('Points', String(current.points || 0))
+  );
+
+  el.hubGameSummary.append(title, message, stats);
+}
+
 function renderWatch() {
   const snapshot = state.snapshot;
-  const current = snapshot?.players.find((player) => player.id === state.playerId);
+  const current = currentPlayer();
+  el.hubWatchLocked.replaceChildren();
+
   if (!snapshot?.watch?.canWatch || !(current?.correct || current?.gaveUp) || !snapshot.game.puzzle) {
-    hide(el.watchView);
+    hide(el.hubWatchStage);
+    show(el.hubWatchLocked);
+    el.hubWatchLocked.append(emptyState('Watch unlocks after you solve correctly or give up.'));
     state.watchingPlayerId = '';
     return;
   }
 
   const watchablePlayers = snapshot.players.filter((player) => player.id !== state.playerId);
   if (watchablePlayers.length === 0) {
-    hide(el.watchView);
+    hide(el.hubWatchStage);
+    show(el.hubWatchLocked);
+    el.hubWatchLocked.append(emptyState('No other players to watch yet.'));
     return;
   }
 
@@ -542,26 +648,128 @@ function renderWatch() {
     state.watchingPlayerId = watchablePlayers[0].id;
   }
 
-  el.watchPlayer.replaceChildren(
-    ...watchablePlayers.map((player) => {
-      const option = document.createElement('option');
-      option.value = player.id;
-      option.textContent = player.name;
-      option.selected = player.id === state.watchingPlayerId;
-      return option;
-    })
-  );
-
-  const board = snapshot.watch.boards.find((watchBoard) => watchBoard.playerId === state.watchingPlayerId);
+  const board = state.watchMode === 'live' ? liveWatchBoard(state.watchingPlayerId) : replayWatchBoard(state.watchingPlayerId);
   const player = snapshot.players.find((item) => item.id === state.watchingPlayerId);
   if (!board || !player) {
-    hide(el.watchView);
+    hide(el.hubWatchStage);
+    show(el.hubWatchLocked);
+    el.hubWatchLocked.append(emptyState('This player is not available to watch.'));
     return;
   }
 
-  renderBoard(snapshot.game.puzzle, board.board, el.watchBoard);
-  el.watchProgress.textContent = `${player.progress.filled}/${player.progress.total} · ${player.progress.percent}%`;
-  show(el.watchView);
+  el.hubWatchName.textContent = player.name;
+  el.hubWatchProgress.textContent = `${player.progress.filled}/${player.progress.total} · ${player.progress.percent}%`;
+  el.hubLiveToggle.classList.toggle('is-active', state.watchMode === 'live');
+  el.hubLiveToggle.textContent = state.watchMode === 'live' ? 'Live on' : 'Live';
+  el.hubPrevStep.disabled = state.watchMode === 'live';
+  el.hubNextStep.disabled = state.watchMode === 'live';
+  el.hubPlayReplay.disabled = state.watchMode === 'live';
+  el.hubResetReplay.disabled = state.watchMode === 'live';
+  const wrongCells = state.watchMode === 'live' ? new Set() : wrongCellsAt(reviewForPlayer(state.watchingPlayerId), state.watchReplayIndex);
+  renderBoard(snapshot.game.puzzle, board, el.hubWatchBoard, { wrongCells });
+  hide(el.hubWatchLocked);
+  show(el.hubWatchStage);
+}
+
+function currentPlayer() {
+  return state.snapshot?.players.find((player) => player.id === state.playerId) || null;
+}
+
+function canReviewSnapshot() {
+  const current = currentPlayer();
+  return Boolean(state.snapshot?.review?.canReview && (current?.correct || current?.gaveUp));
+}
+
+function emptyState(message) {
+  const box = document.createElement('div');
+  box.className = 'empty-card';
+  const title = document.createElement('strong');
+  title.textContent = 'Not available yet';
+  const text = document.createElement('p');
+  text.className = 'muted';
+  text.textContent = message;
+  box.append(title, text);
+  return box;
+}
+
+function watchablePlayers() {
+  return state.snapshot?.players.filter((player) => player.id !== state.playerId) || [];
+}
+
+function selectWatchedPlayer(direction) {
+  const players = watchablePlayers();
+  if (players.length === 0) return;
+  const currentIndex = Math.max(
+    0,
+    players.findIndex((player) => player.id === state.watchingPlayerId)
+  );
+  const nextIndex = (currentIndex + direction + players.length) % players.length;
+  state.watchingPlayerId = players[nextIndex].id;
+  state.watchReplayIndex = 0;
+  renderWatch();
+}
+
+function liveWatchBoard(playerId) {
+  return state.snapshot?.watch?.boards.find((watchBoard) => watchBoard.playerId === playerId)?.board || null;
+}
+
+function reviewForPlayer(playerId) {
+  return state.snapshot?.review?.players.find((player) => player.playerId === playerId) || null;
+}
+
+function replayWatchBoard(playerId) {
+  const review = reviewForPlayer(playerId);
+  if (!review) return liveWatchBoard(playerId);
+  return replayBoardAt(review, state.watchReplayIndex);
+}
+
+function toggleWatchLive() {
+  state.watchMode = state.watchMode === 'live' ? 'replay' : 'live';
+  stopWatchReplay();
+  renderWatch();
+}
+
+function resetWatchReplay() {
+  stopWatchReplay();
+  state.watchMode = 'replay';
+  state.watchReplayIndex = 0;
+  renderWatch();
+}
+
+function stepWatchReplay(direction) {
+  const review = reviewForPlayer(state.watchingPlayerId);
+  if (!review) return;
+  stopWatchReplay();
+  state.watchMode = 'replay';
+  state.watchReplayIndex = clampReplayIndex(review, state.watchReplayIndex + direction);
+  renderWatch();
+}
+
+function playWatchReplay() {
+  const review = reviewForPlayer(state.watchingPlayerId);
+  if (!review) return;
+  stopWatchReplay();
+  state.watchMode = 'replay';
+  if (state.watchReplayIndex >= review.replay.moves.length) {
+    state.watchReplayIndex = 0;
+  }
+  state.watchReplayTimer = setInterval(() => {
+    const activeReview = reviewForPlayer(state.watchingPlayerId);
+    if (!activeReview || state.watchReplayIndex >= activeReview.replay.moves.length) {
+      stopWatchReplay();
+      renderWatch();
+      return;
+    }
+    state.watchReplayIndex += 1;
+    renderWatch();
+  }, 180);
+}
+
+function stopWatchReplay() {
+  if (state.watchReplayTimer) {
+    clearInterval(state.watchReplayTimer);
+    state.watchReplayTimer = null;
+  }
 }
 
 function showReview(playerId) {
@@ -570,10 +778,19 @@ function showReview(playerId) {
   stopReplay();
   state.reviewPlayerId = playerId;
   state.replayIndex = 0;
-  el.reviewTitle.textContent = `${review.name} review`;
+  setHubTab('detail');
+}
+
+function renderActiveReview() {
+  const review = currentReview();
+  if (!review) return;
+  const player = state.snapshot?.players.find((item) => item.id === review.playerId);
+  el.reviewTitle.textContent = `${review.name} details`;
+  el.detailSummary.textContent = player
+    ? `${player.progress.percent}% · ${formatDuration(player.timer?.elapsedSeconds || 0)} · ${player.points || 0} points`
+    : '';
   renderReviewTimeline(review);
-  renderReviewBoard(review, review.replay.puzzle);
-  show(el.reviewPanel);
+  renderReviewBoard(review, replayBoardAt(review, state.replayIndex));
 }
 
 function renderReviewTimeline(review) {
@@ -601,7 +818,7 @@ function renderReviewTimeline(review) {
 }
 
 function renderReviewBoard(review, board) {
-  renderBoard(review.replay.puzzle, board, el.reviewBoard);
+  renderBoard(review.replay.puzzle, board, el.reviewBoard, { wrongCells: wrongCellsAt(review, state.replayIndex) });
 }
 
 function playReplay() {
@@ -617,10 +834,17 @@ function playReplay() {
       stopReplay();
       return;
     }
-    const board = replayBoardAt(activeReview, state.replayIndex + 1);
     state.replayIndex += 1;
-    renderReviewBoard(activeReview, board);
+    renderReviewBoard(activeReview, replayBoardAt(activeReview, state.replayIndex));
   }, 180);
+}
+
+function stepReplay(direction) {
+  const review = currentReview();
+  if (!review) return;
+  stopReplay();
+  state.replayIndex = clampReplayIndex(review, state.replayIndex + direction);
+  renderReviewBoard(review, replayBoardAt(review, state.replayIndex));
 }
 
 function resetReplay() {
@@ -648,6 +872,22 @@ function replayBoardAt(review, moveCount) {
     board[move.cell] = move.value;
   }
   return board;
+}
+
+function wrongCellsAt(review, moveCount) {
+  const wrongCells = new Set();
+  if (!review) return wrongCells;
+  for (const move of review.replay.moves.slice(0, moveCount)) {
+    wrongCells.delete(move.cell);
+    if (move.value !== 0 && move.wrong) {
+      wrongCells.add(move.cell);
+    }
+  }
+  return wrongCells;
+}
+
+function clampReplayIndex(review, index) {
+  return Math.max(0, Math.min(review.replay.moves.length, index));
 }
 
 function playersForDisplay(snapshot) {

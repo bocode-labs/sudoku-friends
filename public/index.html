@@ -96,44 +96,97 @@
         </div>
         <p id="syncStatus" class="sync-status hidden" aria-live="polite"></p>
         <p id="result" class="result"></p>
-        <section id="watchView" class="watch-view hidden" aria-label="Watch players">
-          <div class="watch-controls">
-            <label for="watchPlayer">Watch</label>
-            <select id="watchPlayer"></select>
-          </div>
-          <div class="tv-frame">
-            <div class="tv-screen">
-              <div id="watchBoard" class="board watch-board" aria-label="Watched player board"></div>
-            </div>
-            <div class="tv-controls" aria-hidden="true">
-              <span></span>
-              <span></span>
-            </div>
-          </div>
-          <p id="watchProgress" class="watch-progress"></p>
-        </section>
       </section>
 
 
-      <aside id="scores" class="scores hidden" role="dialog" aria-modal="true" aria-labelledby="scoresTitle">
-        <div class="scores-dialog">
-          <div class="scores-header">
-            <h2 id="scoresTitle">Leaderboard</h2>
-            <button id="closeScores" class="icon-button" type="button" title="Close rankings">×</button>
+      <aside id="gameHub" class="game-hub hidden" role="dialog" aria-modal="true" aria-labelledby="hubTitle">
+        <div class="hub-shell">
+          <div class="hub-header">
+            <div>
+              <p class="eyebrow">Sudoku Friends</p>
+              <h2 id="hubTitle">Game hub</h2>
+            </div>
+            <button id="closeHub" class="icon-button" type="button" title="Close hub" aria-label="Close hub">×</button>
           </div>
-          <div id="scoreList"></div>
-          <section id="reviewPanel" class="review-panel hidden" aria-label="Player review">
-            <div class="review-header">
-              <h3 id="reviewTitle">Review</h3>
-              <button id="closeReview" class="icon-button" type="button" title="Close review">×</button>
+
+          <nav class="hub-tabs" aria-label="Game hub tabs">
+            <button id="hubGameTab" class="hub-tab is-active" type="button" data-hub-tab="game">Game</button>
+            <button id="hubWatchTab" class="hub-tab" type="button" data-hub-tab="watch">Watch</button>
+            <button id="hubScoreboardTab" class="hub-tab" type="button" data-hub-tab="scoreboard">Scoreboard</button>
+          </nav>
+
+          <div class="hub-body">
+            <section id="hubGamePanel" class="hub-panel" aria-labelledby="hubGameTab">
+              <div id="hubGameSummary" class="hub-summary"></div>
+            </section>
+
+            <section id="hubWatchPanel" class="hub-panel hidden" aria-labelledby="hubWatchTab">
+              <div id="hubWatchLocked" class="hub-empty hidden"></div>
+              <div id="hubWatchStage" class="watch-stage hidden">
+                <div class="watch-player-bar">
+                  <button id="hubPrevPlayer" class="arrow-button" type="button" aria-label="Previous player">‹</button>
+                  <div>
+                    <strong id="hubWatchName"></strong>
+                    <span id="hubWatchProgress"></span>
+                  </div>
+                  <button id="hubNextPlayer" class="arrow-button" type="button" aria-label="Next player">›</button>
+                </div>
+                <div class="tv-frame hub-tv">
+                  <div class="tv-screen">
+                    <div id="hubWatchBoard" class="board watch-board" aria-label="Watched player board"></div>
+                  </div>
+                  <div class="tv-controls" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+                <div class="replay-controls">
+                  <button id="hubLiveToggle" type="button">Live</button>
+                  <button id="hubResetReplay" type="button">Reset</button>
+                  <button id="hubPrevStep" type="button">Prev</button>
+                  <button id="hubPlayReplay" type="button">Play</button>
+                  <button id="hubNextStep" type="button">Next</button>
+                </div>
+              </div>
+            </section>
+
+            <section id="hubScoreboardPanel" class="hub-panel hidden" aria-labelledby="hubScoreboardTab">
+              <div id="scoreList"></div>
+            </section>
+
+            <section id="hubDetailPanel" class="hub-panel hidden" aria-label="Player details">
+              <div class="detail-header">
+                <button id="closeReview" type="button">← Scoreboard</button>
+                <div>
+                  <h3 id="reviewTitle">Player details</h3>
+                  <p id="detailSummary" class="muted"></p>
+                </div>
+              </div>
+              <div class="detail-grid">
+                <div class="timeline-card">
+                  <h4>Points timeline</h4>
+                  <div id="reviewTimeline" class="review-timeline"></div>
+                </div>
+                <div class="detail-tv-card">
+                  <div class="tv-frame">
+                    <div class="tv-screen">
+                      <div id="reviewBoard" class="board review-board" aria-label="Replay board"></div>
+                    </div>
+                    <div class="tv-controls" aria-hidden="true">
+                      <span></span>
+                      <span></span>
+                    </div>
+                  </div>
+                  <div class="replay-controls">
+                    <button id="resetReplay" type="button">Reset</button>
+                    <button id="previousReplay" type="button">Prev</button>
+                    <button id="playReplay" type="button">Play</button>
+                    <button id="nextReplay" type="button">Next</button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div id="reviewTimeline" class="review-timeline"></div>
-            <div id="reviewBoard" class="board review-board" aria-label="Replay board"></div>
-            <div class="review-controls">
-              <button id="playReplay" type="button">Play</button>
-              <button id="resetReplay" type="button">Reset</button>
-            </div>
-          </section>
+          </div>
         </div>
       </aside>
 

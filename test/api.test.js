@@ -629,6 +629,13 @@ test('review snapshot includes timeline and replay only for allowed players', as
       });
       assert.equal(move.status, 200);
     }
+    const wrongValue = SOLUTION[0] === 9 ? 8 : 9;
+    const wrongMove = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: grace.body.player.id,
+      cell: 0,
+      value: wrongValue
+    });
+    assert.equal(wrongMove.status, 200);
     const giveUp = await post(t.app, `/api/games/${code}/give-up`, {
       playerId: grace.body.player.id
     });
@@ -640,7 +647,8 @@ test('review snapshot includes timeline and replay only for allowed players', as
     const graceReview = review.body.review.players.find((player) => player.playerId === grace.body.player.id);
     assert.ok(adaReview.timeline.some((event) => event.type === 'finish' && event.points === 100));
     assert.ok(adaReview.timeline.some((event) => event.type === 'award' && event.points > 0));
-    assert.ok(adaReview.replay.moves.some((move) => move.cell === 0 && move.value === SOLUTION[0]));
+    assert.ok(adaReview.replay.moves.some((move) => move.cell === 0 && move.value === SOLUTION[0] && move.wrong === false));
+    assert.ok(graceReview.replay.moves.some((move) => move.cell === 0 && move.value === wrongValue && move.wrong === true));
     assert.ok(graceReview.timeline.some((event) => event.type === 'give_up' && event.points === 0));
     assert.deepEqual(review.body.game.solution, undefined);
   } finally {

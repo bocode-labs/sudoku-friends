@@ -525,6 +525,7 @@ function rewindBeforeFirstMistake(db, game, player) {
 
 function reviewSnapshot(db, game, playerRows) {
   const puzzle = deserialize(game.puzzle);
+  const solution = deserialize(game.solution);
   return {
     canReview: true,
     players: playerRows.map((player) => {
@@ -536,7 +537,11 @@ function reviewSnapshot(db, game, playerRows) {
         .all(player.id);
       const moves = db
         .prepare('select cell, value, created_at as createdAt from moves where player_id = ? and active = 1 order by id asc')
-        .all(player.id);
+        .all(player.id)
+        .map((move) => ({
+          ...move,
+          wrong: move.value !== 0 && move.value !== solution[move.cell]
+        }));
       return {
         playerId: player.id,
         name: player.name,
