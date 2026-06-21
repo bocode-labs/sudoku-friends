@@ -24,11 +24,15 @@ The database file is `${DATA_DIR}/sudoku-friends.sqlite`.
 - `src/server.js`: production entrypoint.
 - `src/app.js`: Express app, JSON API, SSE endpoint, static file serving.
 - `src/db.js`: SQLite connection and schema.
-- `src/sudoku.js`: randomized backtracking Sudoku solution generation, symmetric clue removal with a bounded solution counter to preserve a unique solution, and validation.
+- `src/sudoku.js`: Sudoku generation through the MIT-licensed `sudoku-core` analyzer/generator, app board conversion, independent uniqueness checks, and validation.
 - `public/`: browser UI.
 - `test/`: Node test runner tests for generation/validation and core API flow.
 
 Games are created in `lobby` state with a generated puzzle and full solution persisted server-side. Players who join receive a board initialized from the givens. The `/api/games/:code/start` route requires the host token returned when the game was created; after start, all players see the same puzzle.
+
+## Difficulty
+
+Game creation accepts `easy`, `medium`, `hard`, and `expert`. Each generated puzzle is analyzed by `sudoku-core`; the server only returns puzzles whose analyzer difficulty matches the requested level and whose solution is unique. Empty cells are stored as `0` inside the app and converted to `null` only when calling `sudoku-core`.
 
 ## SSE
 

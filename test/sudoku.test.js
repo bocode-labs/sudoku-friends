@@ -6,29 +6,36 @@ import {
   countFilledCells,
   generatePuzzle,
   isCompleteAndCorrect,
-  isValidSolution
+  isValidSolution,
+  ratePuzzleDifficulty
 } from '../src/sudoku.js';
 
-test('difficulty levels use the requested clue counts', () => {
-  assert.deepEqual(
-    Object.fromEntries(Object.entries(DIFFICULTIES).map(([name, config]) => [name, config.givens])),
-    {
-      easy: 36,
-      medium: 32,
-      hard: 28,
-      expert: 24
-    }
-  );
+test('difficulty levels expose the supported analyzer ratings', () => {
+  assert.deepEqual(Object.keys(DIFFICULTIES), ['easy', 'medium', 'hard', 'expert']);
 });
 
-test('generates valid puzzles for every difficulty with stable givens', () => {
+test('rates puzzle difficulty with solution and uniqueness data', () => {
+  const puzzle = generatePuzzle('easy');
+  const rating = ratePuzzleDifficulty(puzzle.grid);
+
+  assert.equal(rating.difficulty, 'easy');
+  assert.equal(rating.hasSolution, true);
+  assert.equal(rating.hasUniqueSolution, true);
+  assert.equal(typeof rating.score, 'number');
+});
+
+test('generates valid puzzles for every requested difficulty rating', () => {
   for (const difficulty of Object.keys(DIFFICULTIES)) {
     const puzzle = generatePuzzle(difficulty);
+    const rating = ratePuzzleDifficulty(puzzle.grid);
 
     assert.equal(puzzle.solution.length, 81);
     assert.equal(puzzle.grid.length, 81);
     assert.equal(isValidSolution(puzzle.solution), true);
-    assert.equal(countFilledCells(puzzle.grid), DIFFICULTIES[difficulty].givens);
+    assert.equal(rating.difficulty, difficulty);
+    assert.equal(rating.hasSolution, true);
+    assert.equal(rating.hasUniqueSolution, true);
+    assert.ok(countFilledCells(puzzle.grid) > 0);
 
     for (let i = 0; i < 81; i += 1) {
       if (puzzle.grid[i] !== 0) {
