@@ -30,6 +30,7 @@ const el = {
   scoreList: document.querySelector('#scoreList'),
   closeScores: document.querySelector('#closeScores'),
   difficulty: document.querySelector('#difficulty'),
+  hostName: document.querySelector('#hostName'),
   createGame: document.querySelector('#createGame'),
   shareUrl: document.querySelector('#shareUrl'),
   copyShareUrl: document.querySelector('#copyShareUrl'),
@@ -37,6 +38,8 @@ const el = {
   joinGame: document.querySelector('#joinGame'),
   startGame: document.querySelector('#startGame'),
   waitingText: document.querySelector('#waitingText'),
+  waitingPlayers: document.querySelector('#waitingPlayers'),
+  waitingPlayersCount: document.querySelector('#waitingPlayersCount'),
   board: document.querySelector('#board'),
   numbers: document.querySelector('#numbers'),
   result: document.querySelector('#result'),
@@ -69,13 +72,22 @@ deleteButton.addEventListener('click', () => submitValue(0));
 el.numbers.append(deleteButton);
 
 el.createGame.addEventListener('click', async () => {
+  if (!el.hostName.value.trim()) {
+    el.hostName.focus();
+    showToast('Enter your name to host a game.');
+    return;
+  }
   const res = await api('/api/games', {
     method: 'POST',
-    body: { difficulty: el.difficulty.value }
+    body: { difficulty: el.difficulty.value, name: el.hostName.value }
   });
   state.code = res.game.code;
   state.hostToken = res.game.hostToken;
   localStorage.setItem(`sf:hostToken:${state.code}`, state.hostToken);
+  if (res.player) {
+    state.playerId = res.player.id;
+    localStorage.setItem(`sf:playerId:${state.code}`, state.playerId);
+  }
   history.replaceState(null, '', withBasePath(`/g/${state.code}`));
   renderRoute();
 });
@@ -201,6 +213,7 @@ function renderSnapshot() {
   el.startGame.classList.toggle('hidden', !isHost || snapshot.game.status !== 'lobby');
   el.waitingText.classList.toggle('hidden', snapshot.game.status !== 'lobby' || isHost);
   document.querySelector('#joinForm').classList.toggle('hidden', hasPlayer);
+  renderWaitingPlayers(snapshot.waitingPlayers || snapshot.players);
   renderScores(players);
   renderRankIndicator(players);
   maybeShowFinishDialog(snapshot);
@@ -217,6 +230,34 @@ function renderSnapshot() {
   show(el.playView);
   renderBoard(snapshot.game.puzzle, state.localBoard || snapshot.player?.board || snapshot.game.puzzle, el.board);
   renderWatch();
+}
+
+function renderWaitingPlayers(players) {
+  el.waitingPlayers.replaceChildren();
+  el.waitingPlayersCount.textContent = String(players.length);
+  if (players.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'waiting-empty muted';
+    empty.textContent = 'No players have joined yet.';
+    el.waitingPlayers.append(empty);
+    return;
+  }
+
+  players.forEach((player) => {
+    const row = document.createElement('div');
+    row.className = `waiting-player${player.id === state.playerId ? ' is-current' : ''}`;
+
+    const avatar = document.createElement('span');
+    avatar.className = 'waiting-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    avatar.textContent = initialsFor(player.name);
+
+    const name = document.createElement('strong');
+    name.textContent = player.name;
+
+    row.append(avatar, name);
+    el.waitingPlayers.append(row);
+  });
 }
 
 function renderBoard(puzzle, board, target) {
@@ -428,6 +469,15 @@ function ordinal(value) {
   if (mod100 >= 11 && mod100 <= 13) return `${value}th`;
   const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[value % 10] || 'th';
   return `${value}${suffix}`;
+}
+
+function initialsFor(name) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('');
 }
 
 function metaItem(label, value) {

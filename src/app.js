@@ -40,18 +40,30 @@ function createRoutes({ db, streams }) {
     const { grid, solution } = generatePuzzle(difficulty);
     const code = createCode();
     const hostToken = randomUUID();
-    db.prepare(
-      'insert into games (code, host_token, difficulty, puzzle, solution) values (?, ?, ?, ?, ?)'
-    ).run(code, hostToken, difficulty, serialize(grid), serialize(solution));
+    const hostName = playerNameFrom(req.body?.name);
+    const createGame = db.transaction(() => {
+      const gameResult = db
+        .prepare('insert into games (code, host_token, difficulty, puzzle, solution) values (?, ?, ?, ?, ?)')
+        .run(code, hostToken, difficulty, serialize(grid), serialize(solution));
+      if (!hostName) {
+        return null;
+      }
+      return createPlayer(db, gameResult.lastInsertRowid, hostName, grid);
+    });
+    const player = createGame();
 
-    return res.status(201).json({
+    const body = {
       game: {
         code,
         hostToken,
         difficulty,
         shareUrl: `${routeBasePath(req)}/g/${code}`
       }
-    });
+    };
+    if (player) {
+      body.player = player;
+    }
+    return res.status(201).json(body);
   });
 
   routes.post('/api/games/:code/players', (req, res) => {
@@ -60,22 +72,12 @@ function createRoutes({ db, streams }) {
       return res.status(404).json({ error: 'Game not found' });
     }
 
-    const name = String(req.body?.name || '').trim().slice(0, 32);
+    const name = playerNameFrom(req.body?.name);
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
 
-    const player = {
-      id: randomUUID(),
-      name
-    };
-    const board = deserialize(game.puzzle);
-    db.prepare('insert into players (id, game_id, name, board) values (?, ?, ?, ?)').run(
-      player.id,
-      game.id,
-      name,
-      serialize(board)
-    );
+    const player = createPlayer(db, game.id, name, deserialize(game.puzzle));
     broadcast(streams, db, game.code);
 
     return res.status(201).json({ player });
@@ -219,11 +221,16 @@ function snapshot(db, code, playerId) {
     return null;
   }
 
-  const players = db
+  const playerRows = db
     .prepare(
       'select id, name, board, finish_points, completed, correct, completed_at, joined_at from players where game_id = ? order by joined_at asc'
     )
-    .all(game.id)
+    .all(game.id);
+  const waitingPlayers = playerRows.map((player) => ({
+    id: player.id,
+    name: player.name
+  }));
+  const players = playerRows
     .map((player) => {
       const awards = db
         .prepare('select type, unit, points, awarded_at as awardedAt from event_awards where player_id = ? order by awarded_at asc, id asc')
@@ -266,6 +273,7 @@ function snapshot(db, code, playerId) {
       puzzle: game.status === 'playing' ? deserialize(game.puzzle) : null
     },
     player: player ? { id: player.id, board: deserialize(player.board) } : null,
+    waitingPlayers,
     players,
     watch: {
       canWatch,
@@ -280,6 +288,24 @@ function snapshot(db, code, playerId) {
         : []
     }
   };
+}
+
+function playerNameFrom(value) {
+  return String(value || '').trim().slice(0, 32);
+}
+
+function createPlayer(db, gameId, name, puzzle) {
+  const player = {
+    id: randomUUID(),
+    name
+  };
+  db.prepare('insert into players (id, game_id, name, board) values (?, ?, ?, ?)').run(
+    player.id,
+    gameId,
+    name,
+    serialize(puzzle)
+  );
+  return player;
 }
 
 function progressFor(board, puzzle) {

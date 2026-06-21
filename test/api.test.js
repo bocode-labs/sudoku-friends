@@ -193,6 +193,52 @@ test('creates a game, joins players, starts once, and records moves without wron
   }
 });
 
+test('creating a game with a host name joins the host as the first lobby player', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'medium', name: 'Host Ada' });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.player.name, 'Host Ada');
+
+    const snapshot = await get(t.app, `/api/games/${created.body.game.code}?playerId=${created.body.player.id}`);
+    assert.equal(snapshot.status, 200);
+    assert.deepEqual(snapshot.body.player.id, created.body.player.id);
+    assert.deepEqual(snapshot.body.waitingPlayers, [{ id: created.body.player.id, name: 'Host Ada' }]);
+
+    const start = await post(t.app, `/api/games/${created.body.game.code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const started = await get(t.app, `/api/games/${created.body.game.code}?playerId=${created.body.player.id}`);
+    assert.equal(started.body.game.status, 'playing');
+    assert.equal(started.body.player.id, created.body.player.id);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('lobby snapshots expose waiting players separately from leaderboard details', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const ada = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    const grace = await post(t.app, `/api/games/${code}/players`, { name: 'Grace' });
+
+    const snapshot = await get(t.app, `/api/games/${code}`);
+    assert.equal(snapshot.status, 200);
+    assert.deepEqual(snapshot.body.waitingPlayers, [
+      { id: ada.body.player.id, name: 'Ada' },
+      { id: grace.body.player.id, name: 'Grace' }
+    ]);
+    assert.equal(snapshot.body.waitingPlayers[0].points, undefined);
+    assert.equal(snapshot.body.waitingPlayers[0].progress, undefined);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('reports correctness only when a player submits a full board', async () => {
   const t = makeTestApp();
   try {

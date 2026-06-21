@@ -29,9 +29,13 @@
         <div class="panel-heading">
           <span class="panel-icon" aria-hidden="true">✦</span>
           <div>
-            <h2>Start a table</h2>
+            <h2>Start a new game</h2>
             <p class="muted">Pick a puzzle, share the link, and race your friends live.</p>
           </div>
+        </div>
+        <div class="control-card">
+          <label for="hostName">Your name</label>
+          <input id="hostName" maxlength="32" autocomplete="name" placeholder="Player name" />
         </div>
         <div class="control-card">
           <label for="difficulty">Difficulty</label>
@@ -68,6 +72,13 @@
             <input id="playerName" maxlength="32" autocomplete="name" placeholder="Player name" />
           </div>
           <button id="joinGame" class="primary-action" type="button"><span aria-hidden="true">→</span>Join lobby</button>
+        </div>
+        <div class="waiting-card" aria-labelledby="waitingPlayersTitle">
+          <div class="waiting-card-header">
+            <h3 id="waitingPlayersTitle">Waiting players</h3>
+            <span id="waitingPlayersCount">0</span>
+          </div>
+          <div id="waitingPlayers" class="waiting-players"></div>
         </div>
         <button id="startGame" class="primary-action start-action hidden" type="button"><span aria-hidden="true">▶</span>Start</button>
         <p id="waitingText" class="muted">Waiting for the host to start.</p>
