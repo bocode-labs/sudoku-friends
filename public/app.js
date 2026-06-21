@@ -20,6 +20,7 @@ const el = {
   difficulty: document.querySelector('#difficulty'),
   createGame: document.querySelector('#createGame'),
   shareUrl: document.querySelector('#shareUrl'),
+  copyShareUrl: document.querySelector('#copyShareUrl'),
   playerName: document.querySelector('#playerName'),
   joinGame: document.querySelector('#joinGame'),
   startGame: document.querySelector('#startGame'),
@@ -48,6 +49,10 @@ el.createGame.addEventListener('click', async () => {
   localStorage.setItem(`sf:hostToken:${state.code}`, state.hostToken);
   history.replaceState(null, '', withBasePath(`/g/${state.code}`));
   renderRoute();
+});
+
+el.copyShareUrl.addEventListener('click', async () => {
+  await copyShareUrl();
 });
 
 el.joinGame.addEventListener('click', async () => {
@@ -173,6 +178,33 @@ async function submitValue(value) {
     el.result.textContent = '';
   }
   await loadState();
+}
+
+async function copyShareUrl() {
+  const url = el.shareUrl.value;
+  let copied = false;
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+
+  if (!copied) {
+    el.shareUrl.focus();
+    el.shareUrl.select();
+    copied = document.execCommand('copy');
+  }
+
+  if (copied) {
+    el.copyShareUrl.textContent = 'Copied';
+    setTimeout(() => {
+      el.copyShareUrl.textContent = 'Copy';
+    }, 1400);
+  }
 }
 
 function connectEvents() {

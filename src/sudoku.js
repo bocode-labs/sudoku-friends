@@ -1,7 +1,7 @@
 export const DIFFICULTIES = {
-  easy: { givens: 42 },
-  medium: { givens: 36 },
-  hard: { givens: 30 },
+  easy: { givens: 36 },
+  medium: { givens: 32 },
+  hard: { givens: 28 },
   expert: { givens: 24 }
 };
 
@@ -40,11 +40,25 @@ export function generatePuzzle(difficulty = 'medium') {
     throw new Error(`Unknown difficulty: ${difficulty}`);
   }
 
-  const solution = emptyGrid();
-  fillGrid(solution);
-  const grid = [...solution];
-  removeCells(grid, CELLS - DIFFICULTIES[difficulty].givens);
-  return { grid, solution };
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const solution = emptyGrid();
+    fillGrid(solution);
+    const grid = removeSymmetricClues(solution, DIFFICULTIES[difficulty].givens);
+    if (grid) {
+      return { grid, solution };
+    }
+  }
+
+  throw new Error(`Unable to generate a unique ${difficulty} puzzle`);
+}
+
+export function countSolutions(grid, limit = 2) {
+  if (!Array.isArray(grid) || grid.length !== CELLS) {
+    return 0;
+  }
+
+  const working = [...grid];
+  return countGridSolutions(working, Math.max(1, limit));
 }
 
 function emptyGrid() {
@@ -70,10 +84,47 @@ function fillGrid(grid) {
   return false;
 }
 
-function removeCells(grid, removeCount) {
-  for (const index of shuffled([...Array(CELLS).keys()]).slice(0, removeCount)) {
-    grid[index] = 0;
+function removeSymmetricClues(solution, targetGivens) {
+  const grid = [...solution];
+  let givens = CELLS;
+
+  if ((givens - targetGivens) % 2 === 1) {
+    const center = Math.floor(CELLS / 2);
+    const previous = grid[center];
+    grid[center] = 0;
+    if (countSolutions(grid, 2) === 1) {
+      givens -= 1;
+    } else {
+      grid[center] = previous;
+    }
   }
+
+  const pairs = shuffled(
+    Array.from({ length: Math.floor(CELLS / 2) }, (_, index) => [index, CELLS - 1 - index])
+  );
+
+  for (const [first, second] of pairs) {
+    if (givens <= targetGivens) {
+      break;
+    }
+    if (grid[first] === 0 || grid[second] === 0) {
+      continue;
+    }
+
+    const firstValue = grid[first];
+    const secondValue = grid[second];
+    grid[first] = 0;
+    grid[second] = 0;
+
+    if (countSolutions(grid, 2) === 1) {
+      givens -= 2;
+    } else {
+      grid[first] = firstValue;
+      grid[second] = secondValue;
+    }
+  }
+
+  return givens === targetGivens ? grid : null;
 }
 
 function canPlace(grid, index, value) {
@@ -97,6 +148,49 @@ function canPlace(grid, index, value) {
   }
 
   return true;
+}
+
+function countGridSolutions(grid, limit) {
+  const next = findMostConstrainedCell(grid);
+  if (!next) {
+    return 1;
+  }
+  if (next.candidates.length === 0) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const value of next.candidates) {
+    grid[next.index] = value;
+    total += countGridSolutions(grid, limit - total);
+    grid[next.index] = 0;
+    if (total >= limit) {
+      return total;
+    }
+  }
+  return total;
+}
+
+function findMostConstrainedCell(grid) {
+  let best = null;
+  for (let index = 0; index < CELLS; index += 1) {
+    if (grid[index] !== 0) {
+      continue;
+    }
+    const candidates = [];
+    for (let value = 1; value <= SIZE; value += 1) {
+      if (canPlace(grid, index, value)) {
+        candidates.push(value);
+      }
+    }
+    if (!best || candidates.length < best.candidates.length) {
+      best = { index, candidates };
+      if (candidates.length <= 1) {
+        return best;
+      }
+    }
+  }
+  return best;
 }
 
 function row(grid, index) {
