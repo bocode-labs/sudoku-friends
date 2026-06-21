@@ -22,7 +22,10 @@
           <p class="eyebrow">Sudoku Friends</p>
           <h1 id="title">Play together</h1>
         </div>
-        <button id="toggleScores" class="icon-button rank-button" type="button" title="Toggle rankings" aria-label="Toggle rankings">🏆</button>
+        <button id="toggleScores" class="icon-button rank-button" type="button" title="Toggle rankings" aria-label="Toggle rankings">
+          <span aria-hidden="true">🏆</span>
+          <b id="rankBadge"></b>
+        </button>
       </header>
 
       <section id="createView" class="panel start-card">
@@ -87,9 +90,12 @@
       <section id="playView" class="hidden">
         <div id="board" class="board" aria-label="Sudoku board"></div>
         <div id="numbers" class="numbers" aria-label="Number buttons"></div>
+        <div class="game-actions">
+          <button id="rewindMistake" type="button">Rewind mistake</button>
+          <button id="giveUp" type="button">Give up</button>
+        </div>
         <p id="syncStatus" class="sync-status hidden" aria-live="polite"></p>
         <p id="result" class="result"></p>
-        <div id="rankIndicator" class="rank-indicator hidden"></div>
         <section id="watchView" class="watch-view hidden" aria-label="Watch players">
           <div class="watch-controls">
             <label for="watchPlayer">Watch</label>
@@ -116,10 +122,33 @@
             <button id="closeScores" class="icon-button" type="button" title="Close rankings">×</button>
           </div>
           <div id="scoreList"></div>
+          <section id="reviewPanel" class="review-panel hidden" aria-label="Player review">
+            <div class="review-header">
+              <h3 id="reviewTitle">Review</h3>
+              <button id="closeReview" class="icon-button" type="button" title="Close review">×</button>
+            </div>
+            <div id="reviewTimeline" class="review-timeline"></div>
+            <div id="reviewBoard" class="board review-board" aria-label="Replay board"></div>
+            <div class="review-controls">
+              <button id="playReplay" type="button">Play</button>
+              <button id="resetReplay" type="button">Reset</button>
+            </div>
+          </section>
         </div>
       </aside>
 
       <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+      <div id="confirmOverlay" class="confirm-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="confirm-dialog">
+          <h2 id="confirmTitle"></h2>
+          <p id="confirmMessage" class="muted"></p>
+          <div class="confirm-actions">
+            <button id="cancelConfirm" type="button">Cancel</button>
+            <button id="acceptConfirm" type="button">Confirm</button>
+          </div>
+        </div>
+      </div>
 
       <div id="finishOverlay" class="finish-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finishTitle">
         <div class="confetti" aria-hidden="true">

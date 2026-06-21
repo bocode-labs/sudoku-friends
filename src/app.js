@@ -43,6 +43,9 @@ function createRoutes({ db, streams }) {
     if (player.correct) {
       return res.status(409).json({ error: 'Solved boards are locked' });
     }
+    if (player.gave_up) {
+      return res.status(409).json({ error: 'Players who gave up cannot edit their board' });
+    }
 
     const puzzle = deserialize(game.puzzle);
     const board = validateBoard(req.body?.board, puzzle);
@@ -148,6 +151,9 @@ function createRoutes({ db, streams }) {
     if (!player) {
       return res.status(404).json({ error: 'Player not found' });
     }
+    if (player.gave_up) {
+      return res.status(409).json({ error: 'Players who gave up cannot edit their board' });
+    }
 
     const cell = Number(req.body?.cell);
     const value = Number(req.body?.value);
@@ -174,6 +180,68 @@ function createRoutes({ db, streams }) {
 
   routes.put('/api/games/:code/board', handleBoardSync);
   routes.post('/api/games/:code/board', handleBoardSync);
+
+  routes.post('/api/games/:code/rewind-mistake', (req, res) => {
+    const game = findGame(db, req.params.code);
+    if (!game) {
+      return res.status(404).json({ error: 'Game not found' });
+    }
+    if (game.status !== 'playing') {
+      return res.status(409).json({ error: 'Game has not started' });
+    }
+
+    const player = db.prepare('select * from players where id = ? and game_id = ?').get(req.body?.playerId, game.id);
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+    if (player.correct) {
+      return res.status(409).json({ error: 'Solved boards are locked' });
+    }
+    if (player.gave_up) {
+      return res.status(409).json({ error: 'Players who gave up cannot rewind' });
+    }
+
+    const result = rewindBeforeFirstMistake(db, game, player);
+    broadcast(streams, db, game.code);
+    return res.json(result);
+  });
+
+  routes.post('/api/games/:code/give-up', (req, res) => {
+    const game = findGame(db, req.params.code);
+    if (!game) {
+      return res.status(404).json({ error: 'Game not found' });
+    }
+    if (game.status !== 'playing') {
+      return res.status(409).json({ error: 'Game has not started' });
+    }
+
+    const player = db.prepare('select * from players where id = ? and game_id = ?').get(req.body?.playerId, game.id);
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+    if (player.correct) {
+      return res.status(409).json({ error: 'Solved boards are locked' });
+    }
+    if (!player.gave_up) {
+      const gaveUpAt = timestamp();
+      db.transaction(() => {
+        db.prepare('update players set gave_up = 1, gave_up_at = ?, completed = 1, correct = 0 where id = ?').run(
+          gaveUpAt,
+          player.id
+        );
+        db.prepare('insert into player_events (game_id, player_id, type, points, note) values (?, ?, ?, ?, ?)').run(
+          game.id,
+          player.id,
+          'give_up',
+          0,
+          'Gave up'
+        );
+      })();
+    }
+
+    broadcast(streams, db, game.code);
+    return res.json({ gaveUp: true });
+  });
 
   routes.get('/api/games/:code/events', (req, res) => {
     const game = findGame(db, req.params.code);
@@ -226,7 +294,7 @@ function snapshot(db, code, playerId) {
 
   const playerRows = db
     .prepare(
-      'select id, name, board, finish_points, completed, correct, completed_at, joined_at from players where game_id = ? order by joined_at asc'
+      'select id, name, board, finish_points, completed, correct, completed_at, gave_up, gave_up_at, joined_at from players where game_id = ? order by joined_at asc'
     )
     .all(game.id);
   const waitingPlayers = playerRows.map((player) => ({
@@ -238,18 +306,24 @@ function snapshot(db, code, playerId) {
       const awards = db
         .prepare('select type, unit, points, awarded_at as awardedAt from event_awards where player_id = ? order by awarded_at asc, id asc')
         .all(player.id);
+      const events = db
+        .prepare('select type, points, note, created_at as createdAt from player_events where player_id = ? order by created_at asc, id asc')
+        .all(player.id);
       const awardPoints = awards.reduce((total, award) => total + award.points, 0);
+      const eventPoints = events.reduce((total, event) => total + event.points, 0);
       return {
         id: player.id,
         name: player.name,
         progress: progressFor(deserialize(player.board), deserialize(game.puzzle)),
         timer: timerFor(game.started_at, player.completed_at, game.status),
-        points: player.finish_points + awardPoints,
+        points: player.finish_points + awardPoints + eventPoints,
         finishPoints: player.finish_points,
         finishRank: finishRank(db, game.id, player.id),
         awards,
+        events,
         completed: Boolean(player.completed),
-        correct: player.correct === null ? null : Boolean(player.correct)
+        correct: player.correct === null ? null : Boolean(player.correct),
+        gaveUp: Boolean(player.gave_up)
       };
     })
     .sort((left, right) => {
@@ -261,14 +335,12 @@ function snapshot(db, code, playerId) {
     });
 
   const player = playerId
-    ? db.prepare('select id, board from players where id = ? and game_id = ?').get(playerId, game.id)
+    ? db.prepare('select id, board, correct, gave_up from players where id = ? and game_id = ?').get(playerId, game.id)
     : null;
-  const canWatch = Boolean(
-    playerId &&
-      db.prepare('select 1 from players where id = ? and game_id = ? and correct = 1').get(playerId, game.id)
-  );
+  const canWatch = Boolean(player && (player.correct === 1 || player.gave_up === 1));
+  const review = canWatch ? reviewSnapshot(db, game, playerRows) : null;
 
-  return {
+  const body = {
     game: {
       code: game.code,
       difficulty: game.difficulty,
@@ -291,6 +363,10 @@ function snapshot(db, code, playerId) {
         : []
     }
   };
+  if (review) {
+    body.review = review;
+  }
+  return body;
 }
 
 function playerNameFrom(value) {
@@ -366,14 +442,175 @@ function savePlayerBoard(db, game, player, board, previousBoard, move = null) {
       completedAt,
       player.id
     );
-    if (move) {
-      db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(player.id, move.cell, move.value);
+    const moves = move ? [move] : changedMoves(previousBoard, board);
+    for (const changedMove of moves) {
+      db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(
+        player.id,
+        changedMove.cell,
+        changedMove.value
+      );
     }
     awardBoardMilestones(db, game.id, player.id, board, previousBoard, solution);
   });
   save();
 
   return { complete, correct, progress, board };
+}
+
+function changedMoves(previousBoard, board) {
+  const moves = [];
+  for (let cell = 0; cell < board.length; cell += 1) {
+    if (board[cell] !== previousBoard[cell]) {
+      moves.push({ cell, value: board[cell] });
+    }
+  }
+  return moves;
+}
+
+function rewindBeforeFirstMistake(db, game, player) {
+  const puzzle = deserialize(game.puzzle);
+  const solution = deserialize(game.solution);
+  const previousBoard = deserialize(player.board);
+  const moves = db
+    .prepare('select id, cell, value from moves where player_id = ? and active = 1 order by id asc')
+    .all(player.id);
+  const board = puzzle.slice();
+  let mistake = null;
+
+  for (const move of moves) {
+    if (move.value !== 0 && move.value !== solution[move.cell]) {
+      mistake = move;
+      break;
+    }
+    board[move.cell] = move.value;
+  }
+
+  if (!mistake) {
+    return {
+      rewound: false,
+      message: 'No incorrect moves found.',
+      board: previousBoard,
+      progress: progressFor(previousBoard, puzzle)
+    };
+  }
+
+  const progress = progressFor(board, puzzle);
+  db.transaction(() => {
+    db.prepare('update players set board = ?, score = ?, completed = 0, correct = null, completed_at = null where id = ?').run(
+      serialize(board),
+      progress.filled,
+      player.id
+    );
+    db.prepare('update moves set active = 0 where player_id = ? and id >= ?').run(player.id, mistake.id);
+    for (const move of changedMoves(previousBoard, board)) {
+      db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(player.id, move.cell, move.value);
+    }
+    db.prepare('insert into player_events (game_id, player_id, type, points, note) values (?, ?, ?, ?, ?)').run(
+      game.id,
+      player.id,
+      'rewind_penalty',
+      -30,
+      'Rewound to before first mistake'
+    );
+  })();
+
+  return {
+    rewound: true,
+    penalty: -30,
+    message: 'Rewound to before your first mistake.',
+    board,
+    progress
+  };
+}
+
+function reviewSnapshot(db, game, playerRows) {
+  const puzzle = deserialize(game.puzzle);
+  return {
+    canReview: true,
+    players: playerRows.map((player) => {
+      const awards = db
+        .prepare('select type, unit, points, awarded_at as awardedAt from event_awards where player_id = ? order by awarded_at asc, id asc')
+        .all(player.id);
+      const events = db
+        .prepare('select type, points, note, created_at as createdAt from player_events where player_id = ? order by created_at asc, id asc')
+        .all(player.id);
+      const moves = db
+        .prepare('select cell, value, created_at as createdAt from moves where player_id = ? and active = 1 order by id asc')
+        .all(player.id);
+      return {
+        playerId: player.id,
+        name: player.name,
+        timeline: pointTimeline(player, awards, events),
+        replay: {
+          puzzle,
+          finalBoard: deserialize(player.board),
+          moves
+        }
+      };
+    })
+  };
+}
+
+function pointTimeline(player, awards, events) {
+  const timeline = [];
+  if (player.finish_points > 0 && player.completed_at) {
+    timeline.push({
+      type: 'finish',
+      label: 'Finish',
+      points: player.finish_points,
+      createdAt: player.completed_at
+    });
+  }
+  for (const award of awards) {
+    timeline.push({
+      type: 'award',
+      awardType: award.type,
+      unit: award.unit,
+      label: awardLabel(award),
+      points: award.points,
+      createdAt: award.awardedAt
+    });
+  }
+  for (const event of events) {
+    timeline.push({
+      type: event.type,
+      label: eventLabel(event.type),
+      points: event.points,
+      note: event.note,
+      createdAt: event.createdAt
+    });
+  }
+  timeline.sort((left, right) => {
+    const timeDiff = parseTimestamp(left.createdAt) - parseTimestamp(right.createdAt);
+    if (timeDiff !== 0) return timeDiff;
+    return pointEventOrder(left.type) - pointEventOrder(right.type);
+  });
+  let total = 0;
+  return timeline.map((event) => {
+    total += event.points;
+    return { ...event, total };
+  });
+}
+
+function awardLabel(award) {
+  const names = {
+    row: `Row ${award.unit + 1}`,
+    column: `Column ${award.unit + 1}`,
+    box: `Box ${award.unit + 1}`,
+    digit: `Digit ${award.unit}`
+  };
+  return names[award.type] || award.type;
+}
+
+function eventLabel(type) {
+  return {
+    rewind_penalty: 'Mistake rewind',
+    give_up: 'Gave up'
+  }[type] || type;
+}
+
+function pointEventOrder(type) {
+  return { finish: 0, award: 1, rewind_penalty: 2, give_up: 3 }[type] ?? 4;
 }
 
 function responseForSave(result) {

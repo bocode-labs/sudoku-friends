@@ -111,6 +111,14 @@ function get(app, path) {
   return appRequest(app, 'GET', path);
 }
 
+function playableBoard(...entries) {
+  const board = rowZeroPuzzle();
+  for (const [cell, value] of entries) {
+    board[cell] = value;
+  }
+  return board;
+}
+
 const SOLUTION = [
   1, 2, 3, 4, 5, 6, 7, 8, 9,
   4, 5, 6, 7, 8, 9, 1, 2, 3,
@@ -428,6 +436,218 @@ test('full-board sync saves the latest board snapshot and awards completion mile
   }
 });
 
+test('full-board sync records changed cells as ordered moves for replay', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const synced = await put(t.app, `/api/games/${code}/board`, {
+      playerId: joined.body.player.id,
+      board: playableBoard([0, SOLUTION[0]], [1, SOLUTION[1]], [2, 9])
+    });
+    assert.equal(synced.status, 200);
+
+    const moves = t.db
+      .prepare('select cell, value from moves where player_id = ? order by id asc')
+      .all(joined.body.player.id);
+    assert.deepEqual(moves, [
+      { cell: 0, value: SOLUTION[0] },
+      { cell: 1, value: SOLUTION[1] },
+      { cell: 2, value: 9 }
+    ]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('mistake rewind deducts 30 points and rewinds to before the first incorrect move', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    for (const [cell, value] of [
+      [0, SOLUTION[0]],
+      [1, 9],
+      [2, SOLUTION[2]]
+    ]) {
+      const move = await post(t.app, `/api/games/${code}/moves`, {
+        playerId: joined.body.player.id,
+        cell,
+        value
+      });
+      assert.equal(move.status, 200);
+    }
+
+    const beforeRewind = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    const beforePoints = beforeRewind.body.players.find((item) => item.id === joined.body.player.id).points;
+
+    const rewind = await post(t.app, `/api/games/${code}/rewind-mistake`, {
+      playerId: joined.body.player.id
+    });
+    assert.equal(rewind.status, 200);
+    assert.equal(rewind.body.rewound, true);
+    assert.equal(rewind.body.penalty, -30);
+    assert.deepEqual(rewind.body.board.slice(0, 3), [SOLUTION[0], 0, 0]);
+
+    const snapshot = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    const player = snapshot.body.players.find((item) => item.id === joined.body.player.id);
+    assert.equal(player.points, beforePoints - 30);
+    assert.deepEqual(snapshot.body.player.board.slice(0, 3), [SOLUTION[0], 0, 0]);
+    assert.ok(player.events.some((event) => event.type === 'rewind_penalty' && event.points === -30));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('mistake rewind does not charge when no incorrect move exists', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const move = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: joined.body.player.id,
+      cell: 0,
+      value: SOLUTION[0]
+    });
+    assert.equal(move.status, 200);
+
+    const beforeRewind = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    const beforePoints = beforeRewind.body.players.find((item) => item.id === joined.body.player.id).points;
+
+    const rewind = await post(t.app, `/api/games/${code}/rewind-mistake`, {
+      playerId: joined.body.player.id
+    });
+    assert.equal(rewind.status, 200);
+    assert.equal(rewind.body.rewound, false);
+    assert.match(rewind.body.message, /no incorrect/i);
+
+    const snapshot = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    const player = snapshot.body.players.find((item) => item.id === joined.body.player.id);
+    assert.equal(player.points, beforePoints);
+    assert.deepEqual(snapshot.body.player.board.slice(0, 2), [SOLUTION[0], 0]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('give up locks future moves and enables watch and review access', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const ada = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    const grace = await post(t.app, `/api/games/${code}/players`, { name: 'Grace' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const move = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: grace.body.player.id,
+      cell: 0,
+      value: SOLUTION[0]
+    });
+    assert.equal(move.status, 200);
+
+    const giveUp = await post(t.app, `/api/games/${code}/give-up`, {
+      playerId: ada.body.player.id
+    });
+    assert.equal(giveUp.status, 200);
+    assert.equal(giveUp.body.gaveUp, true);
+
+    const locked = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: ada.body.player.id,
+      cell: 0,
+      value: SOLUTION[0]
+    });
+    assert.equal(locked.status, 409);
+    assert.match(locked.body.error, /gave up/i);
+
+    const snapshot = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    const adaSnapshot = snapshot.body.players.find((player) => player.id === ada.body.player.id);
+    assert.equal(adaSnapshot.gaveUp, true);
+    assert.equal(adaSnapshot.correct, false);
+    assert.equal(snapshot.body.watch.canWatch, true);
+    assert.deepEqual(
+      snapshot.body.watch.boards.find((board) => board.playerId === grace.body.player.id)?.board.slice(0, 1),
+      [SOLUTION[0]]
+    );
+    assert.ok(snapshot.body.review.players.some((player) => player.playerId === grace.body.player.id));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('review snapshot includes timeline and replay only for allowed players', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const ada = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    const grace = await post(t.app, `/api/games/${code}/players`, { name: 'Grace' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const activeHidden = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    assert.equal(activeHidden.body.review, undefined);
+
+    for (let cell = 0; cell < 9; cell += 1) {
+      const move = await post(t.app, `/api/games/${code}/moves`, {
+        playerId: ada.body.player.id,
+        cell,
+        value: SOLUTION[cell]
+      });
+      assert.equal(move.status, 200);
+    }
+    const giveUp = await post(t.app, `/api/games/${code}/give-up`, {
+      playerId: grace.body.player.id
+    });
+    assert.equal(giveUp.status, 200);
+
+    const review = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    assert.equal(review.body.review.canReview, true);
+    const adaReview = review.body.review.players.find((player) => player.playerId === ada.body.player.id);
+    const graceReview = review.body.review.players.find((player) => player.playerId === grace.body.player.id);
+    assert.ok(adaReview.timeline.some((event) => event.type === 'finish' && event.points === 100));
+    assert.ok(adaReview.timeline.some((event) => event.type === 'award' && event.points > 0));
+    assert.ok(adaReview.replay.moves.some((move) => move.cell === 0 && move.value === SOLUTION[0]));
+    assert.ok(graceReview.timeline.some((event) => event.type === 'give_up' && event.points === 0));
+    assert.deepEqual(review.body.game.solution, undefined);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('full-board sync can delete values by sending zeroes', async () => {
   const t = makeTestApp();
   try {
@@ -620,7 +840,12 @@ test('migrates existing sqlite databases with leaderboard columns and event awar
     const playerColumns = db.prepare('pragma table_info(players)').all().map((column) => column.name);
     assert.ok(playerColumns.includes('completed_at'));
     assert.ok(playerColumns.includes('finish_points'));
+    assert.ok(playerColumns.includes('gave_up'));
+    assert.ok(playerColumns.includes('gave_up_at'));
+    const moveColumns = db.prepare('pragma table_info(moves)').all().map((column) => column.name);
+    assert.ok(moveColumns.includes('active'));
     assert.ok(db.prepare("select name from sqlite_master where type = 'table' and name = 'event_awards'").get());
+    assert.ok(db.prepare("select name from sqlite_master where type = 'table' and name = 'player_events'").get());
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

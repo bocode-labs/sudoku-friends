@@ -12,8 +12,10 @@ const state = {
   timerTick: null,
   renderedPuzzleKey: '',
   renderedWatchPuzzleKey: '',
+  renderedReviewPuzzleKey: '',
   renderedBoardKey: '',
   renderedWatchBoardKey: '',
+  renderedReviewBoardKey: '',
   localBoard: null,
   localBoardDirty: false,
   syncInFlight: false,
@@ -21,7 +23,12 @@ const state = {
   syncRetryDelay: 1000,
   syncStatus: 'synced',
   toastTimer: null,
-  watchingPlayerId: ''
+  watchingPlayerId: '',
+  undoHistory: [],
+  confirmAction: null,
+  reviewPlayerId: '',
+  replayTimer: null,
+  replayIndex: 0
 };
 
 const el = {
@@ -48,7 +55,9 @@ const el = {
   syncStatus: document.querySelector('#syncStatus'),
   result: document.querySelector('#result'),
   toggleScores: document.querySelector('#toggleScores'),
-  rankIndicator: document.querySelector('#rankIndicator'),
+  rankBadge: document.querySelector('#rankBadge'),
+  rewindMistake: document.querySelector('#rewindMistake'),
+  giveUp: document.querySelector('#giveUp'),
   toast: document.querySelector('#toast'),
   watchView: document.querySelector('#watchView'),
   watchPlayer: document.querySelector('#watchPlayer'),
@@ -56,7 +65,19 @@ const el = {
   watchProgress: document.querySelector('#watchProgress'),
   finishOverlay: document.querySelector('#finishOverlay'),
   finishMessage: document.querySelector('#finishMessage'),
-  dismissFinish: document.querySelector('#dismissFinish')
+  dismissFinish: document.querySelector('#dismissFinish'),
+  confirmOverlay: document.querySelector('#confirmOverlay'),
+  confirmTitle: document.querySelector('#confirmTitle'),
+  confirmMessage: document.querySelector('#confirmMessage'),
+  cancelConfirm: document.querySelector('#cancelConfirm'),
+  acceptConfirm: document.querySelector('#acceptConfirm'),
+  reviewPanel: document.querySelector('#reviewPanel'),
+  reviewTitle: document.querySelector('#reviewTitle'),
+  reviewTimeline: document.querySelector('#reviewTimeline'),
+  reviewBoard: document.querySelector('#reviewBoard'),
+  closeReview: document.querySelector('#closeReview'),
+  playReplay: document.querySelector('#playReplay'),
+  resetReplay: document.querySelector('#resetReplay')
 };
 
 for (let value = 1; value <= 9; value += 1) {
@@ -74,6 +95,14 @@ deleteButton.setAttribute('aria-label', 'Remove selected number');
 deleteButton.textContent = '×';
 deleteButton.addEventListener('click', () => submitValue(0));
 el.numbers.append(deleteButton);
+
+const undoButton = document.createElement('button');
+undoButton.type = 'button';
+undoButton.className = 'undo-number';
+undoButton.setAttribute('aria-label', 'Undo last local edit');
+undoButton.textContent = '↶';
+undoButton.addEventListener('click', undoLocalEdit);
+el.numbers.append(undoButton);
 
 el.createGame.addEventListener('click', async () => {
   if (!el.hostName.value.trim()) {
@@ -150,6 +179,42 @@ el.dismissFinish.addEventListener('click', () => {
   hide(el.finishOverlay);
 });
 
+el.rewindMistake.addEventListener('click', () => {
+  openConfirm({
+    title: 'Rewind mistake',
+    message: 'Rewind to before your first incorrect move? This costs 30 points.',
+    confirmText: 'Rewind',
+    action: rewindMistake
+  });
+});
+
+el.giveUp.addEventListener('click', () => {
+  openConfirm({
+    title: 'Give up',
+    message: 'Stop playing at your current progress and watch the rest of the game?',
+    confirmText: 'Give up',
+    action: giveUp
+  });
+});
+
+el.cancelConfirm.addEventListener('click', closeConfirm);
+el.acceptConfirm.addEventListener('click', async () => {
+  const action = state.confirmAction;
+  closeConfirm();
+  if (action) {
+    await action();
+  }
+});
+
+el.closeReview.addEventListener('click', () => {
+  stopReplay();
+  state.reviewPlayerId = '';
+  hide(el.reviewPanel);
+});
+
+el.playReplay.addEventListener('click', playReplay);
+el.resetReplay.addEventListener('click', resetReplay);
+
 window.addEventListener('online', () => {
   queueBoardSync({ immediate: true });
 });
@@ -168,7 +233,7 @@ async function renderRoute() {
     hide(el.lobbyView, el.playView);
     el.title.textContent = 'Play together';
     renderScores([]);
-    renderRankIndicator([]);
+    renderRankBadge([]);
     return;
   }
 
@@ -196,7 +261,14 @@ function applyServerSnapshot(snapshot) {
   if (!serverBoard) {
     state.localBoard = null;
     state.localBoardDirty = false;
+    state.undoHistory = [];
     setSyncStatus('synced');
+    return;
+  }
+
+  if (isCurrentPlayerLocked()) {
+    state.undoHistory = [];
+    markBoardSynced(serverBoard);
     return;
   }
 
@@ -237,20 +309,21 @@ function renderSnapshot() {
   document.querySelector('#joinForm').classList.toggle('hidden', hasPlayer);
   renderWaitingPlayers(snapshot.waitingPlayers || snapshot.players);
   renderScores(players);
-  renderRankIndicator(players);
+  renderRankBadge(players);
   maybeShowFinishDialog(snapshot);
   updateTimerTick(snapshot.game.status === 'playing');
 
   if (snapshot.game.status !== 'playing') {
     show(el.lobbyView);
     hide(el.playView);
-    hide(el.rankIndicator, el.watchView);
+    hide(el.watchView);
     return;
   }
 
   hide(el.lobbyView);
   show(el.playView);
   renderBoard(snapshot.game.puzzle, state.localBoard || snapshot.player?.board || snapshot.game.puzzle, el.board);
+  renderGameActions(snapshot);
   renderWatch();
 }
 
@@ -284,9 +357,19 @@ function renderWaitingPlayers(players) {
 
 function renderBoard(puzzle, board, target) {
   const puzzleKey = puzzle.join('');
-  const keyName = target === el.watchBoard ? 'renderedWatchPuzzleKey' : 'renderedPuzzleKey';
+  const keyName =
+    target === el.watchBoard
+      ? 'renderedWatchPuzzleKey'
+      : target === el.reviewBoard
+        ? 'renderedReviewPuzzleKey'
+        : 'renderedPuzzleKey';
   const boardKey = board.join('');
-  const boardKeyName = target === el.watchBoard ? 'renderedWatchBoardKey' : 'renderedBoardKey';
+  const boardKeyName =
+    target === el.watchBoard
+      ? 'renderedWatchBoardKey'
+      : target === el.reviewBoard
+        ? 'renderedReviewBoardKey'
+        : 'renderedBoardKey';
   if (state[keyName] === puzzleKey && state[boardKeyName] === boardKey && target.children.length === 81) {
     if (target === el.board) {
       updateBoardSelection();
@@ -310,11 +393,16 @@ function renderBoard(puzzle, board, target) {
   board.forEach((value, index) => {
     const cell = target.children[index];
     cell.textContent = value === 0 ? '' : String(value);
-    cell.disabled = target === el.watchBoard || puzzle[index] !== 0;
+    cell.disabled = target !== el.board || puzzle[index] !== 0 || isCurrentPlayerLocked();
     cell.classList.toggle('given', puzzle[index] !== 0);
     cell.classList.toggle('selected', target === el.board && state.selected === index);
   });
   clearInvalidSelection(puzzle);
+}
+
+function isCurrentPlayerLocked() {
+  const current = state.snapshot?.players.find((player) => player.id === state.playerId);
+  return Boolean(current?.correct || current?.gaveUp);
 }
 
 function updateBoardSelection() {
@@ -365,8 +453,8 @@ function renderScores(players) {
     identity.append(name, rankLabel);
 
     const status = document.createElement('span');
-    status.className = player.correct ? 'status solved' : 'status';
-    status.textContent = player.correct ? 'Solved' : player.completed ? 'Full' : `${player.progress.percent}%`;
+    status.className = player.correct ? 'status solved' : player.gaveUp ? 'status gave-up' : 'status';
+    status.textContent = player.correct ? 'Solved' : player.gaveUp ? 'Gave up' : player.completed ? 'Full' : `${player.progress.percent}%`;
 
     header.append(identity, status);
 
@@ -393,25 +481,52 @@ function renderScores(players) {
     } else {
       row.append(badge, header, progress, meta);
     }
+    if (state.snapshot?.review?.canReview) {
+      const reviewButton = document.createElement('button');
+      reviewButton.type = 'button';
+      reviewButton.className = 'review-button';
+      reviewButton.textContent = 'Review';
+      reviewButton.addEventListener('click', () => showReview(player.id));
+      row.append(reviewButton);
+    }
     el.scoreList.append(row);
   });
 }
 
-function renderRankIndicator(players) {
+function renderRankBadge(players) {
   const currentIndex = players.findIndex((player) => player.id === state.playerId);
   if (currentIndex === -1) {
-    hide(el.rankIndicator);
+    el.rankBadge.textContent = '';
+    el.toggleScores.classList.remove('has-rank');
     return;
   }
   const current = players[currentIndex];
-  el.rankIndicator.textContent = `${ordinal(currentIndex + 1)} · ${current.points || 0} pts · ${current.progress.percent}%`;
-  show(el.rankIndicator);
+  el.rankBadge.textContent = ordinal(currentIndex + 1);
+  el.toggleScores.classList.add('has-rank');
+  el.toggleScores.setAttribute(
+    'aria-label',
+    `Toggle rankings, current rank ${ordinal(currentIndex + 1)}, ${current.points || 0} points`
+  );
+}
+
+function renderGameActions(snapshot) {
+  const current = snapshot.players.find((player) => player.id === state.playerId);
+  const locked = Boolean(current?.correct || current?.gaveUp);
+  el.rewindMistake.disabled = locked || !state.playerId;
+  el.giveUp.disabled = locked || !state.playerId;
+  [...el.numbers.querySelectorAll('button')].forEach((button) => {
+    if (button.classList.contains('undo-number')) {
+      button.disabled = locked || state.undoHistory.length === 0;
+      return;
+    }
+    button.disabled = locked;
+  });
 }
 
 function renderWatch() {
   const snapshot = state.snapshot;
   const current = snapshot?.players.find((player) => player.id === state.playerId);
-  if (!snapshot?.watch?.canWatch || !current?.correct || !snapshot.game.puzzle) {
+  if (!snapshot?.watch?.canWatch || !(current?.correct || current?.gaveUp) || !snapshot.game.puzzle) {
     hide(el.watchView);
     state.watchingPlayerId = '';
     return;
@@ -447,6 +562,92 @@ function renderWatch() {
   renderBoard(snapshot.game.puzzle, board.board, el.watchBoard);
   el.watchProgress.textContent = `${player.progress.filled}/${player.progress.total} · ${player.progress.percent}%`;
   show(el.watchView);
+}
+
+function showReview(playerId) {
+  const review = state.snapshot?.review?.players.find((player) => player.playerId === playerId);
+  if (!review) return;
+  stopReplay();
+  state.reviewPlayerId = playerId;
+  state.replayIndex = 0;
+  el.reviewTitle.textContent = `${review.name} review`;
+  renderReviewTimeline(review);
+  renderReviewBoard(review, review.replay.puzzle);
+  show(el.reviewPanel);
+}
+
+function renderReviewTimeline(review) {
+  el.reviewTimeline.replaceChildren();
+  if (review.timeline.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No point events yet.';
+    el.reviewTimeline.append(empty);
+    return;
+  }
+
+  for (const event of review.timeline) {
+    const row = document.createElement('div');
+    row.className = 'timeline-row';
+    const title = document.createElement('strong');
+    title.textContent = event.label;
+    const meta = document.createElement('span');
+    meta.textContent = `${formatSignedPoints(event.points)} · total ${event.total}`;
+    const time = document.createElement('small');
+    time.textContent = formatTimestamp(event.createdAt);
+    row.append(title, meta, time);
+    el.reviewTimeline.append(row);
+  }
+}
+
+function renderReviewBoard(review, board) {
+  renderBoard(review.replay.puzzle, board, el.reviewBoard);
+}
+
+function playReplay() {
+  const review = currentReview();
+  if (!review) return;
+  stopReplay();
+  if (state.replayIndex >= review.replay.moves.length) {
+    resetReplay();
+  }
+  state.replayTimer = setInterval(() => {
+    const activeReview = currentReview();
+    if (!activeReview || state.replayIndex >= activeReview.replay.moves.length) {
+      stopReplay();
+      return;
+    }
+    const board = replayBoardAt(activeReview, state.replayIndex + 1);
+    state.replayIndex += 1;
+    renderReviewBoard(activeReview, board);
+  }, 180);
+}
+
+function resetReplay() {
+  const review = currentReview();
+  if (!review) return;
+  stopReplay();
+  state.replayIndex = 0;
+  renderReviewBoard(review, review.replay.puzzle);
+}
+
+function stopReplay() {
+  if (state.replayTimer) {
+    clearInterval(state.replayTimer);
+    state.replayTimer = null;
+  }
+}
+
+function currentReview() {
+  return state.snapshot?.review?.players.find((player) => player.playerId === state.reviewPlayerId) || null;
+}
+
+function replayBoardAt(review, moveCount) {
+  const board = review.replay.puzzle.slice();
+  for (const move of review.replay.moves.slice(0, moveCount)) {
+    board[move.cell] = move.value;
+  }
+  return board;
 }
 
 function playersForDisplay(snapshot) {
@@ -524,10 +725,27 @@ async function submitValue(value) {
   const snapshot = state.snapshot;
   const puzzle = snapshot?.game.puzzle;
   if (!snapshot?.player?.board || !puzzle || puzzle[state.selected] !== 0) return;
+  if (isCurrentPlayerLocked()) return;
 
   const cell = state.selected;
-  state.localBoard = (state.localBoard || snapshot.player.board).slice();
+  const previous = (state.localBoard || snapshot.player.board).slice();
+  if (previous[cell] === value) return;
+  state.undoHistory.push(previous);
+  state.localBoard = previous.slice();
   state.localBoard[cell] = value;
+  state.localBoardDirty = true;
+  persistLocalBoard(true);
+  setSyncStatus(navigator.onLine === false ? 'offline' : 'saving');
+  el.result.textContent = '';
+  renderSnapshot();
+  queueBoardSync({ immediate: true });
+}
+
+function undoLocalEdit() {
+  if (isCurrentPlayerLocked()) return;
+  const previous = state.undoHistory.pop();
+  if (!previous) return;
+  state.localBoard = previous.slice();
   state.localBoardDirty = true;
   persistLocalBoard(true);
   setSyncStatus(navigator.onLine === false ? 'offline' : 'saving');
@@ -711,6 +929,61 @@ function renderSyncStatus() {
   show(el.syncStatus);
 }
 
+async function rewindMistake() {
+  if (!state.code || !state.playerId) return;
+  try {
+    await flushPendingBoard();
+    const res = await api(`/api/games/${state.code}/rewind-mistake`, {
+      method: 'POST',
+      body: { playerId: state.playerId }
+    });
+    state.undoHistory = [];
+    if (res.board) {
+      markBoardSynced(res.board);
+    }
+    el.result.textContent = res.message || (res.rewound ? 'Rewound.' : 'No incorrect moves found.');
+    await loadState();
+  } catch (error) {
+    showToast(error.message || 'Could not rewind.');
+  }
+}
+
+async function giveUp() {
+  if (!state.code || !state.playerId) return;
+  try {
+    await flushPendingBoard();
+    await api(`/api/games/${state.code}/give-up`, {
+      method: 'POST',
+      body: { playerId: state.playerId }
+    });
+    state.undoHistory = [];
+    clearPersistedBoard();
+    state.localBoardDirty = false;
+    el.result.textContent = 'You gave up. You can watch the rest of the game.';
+    await loadState();
+  } catch (error) {
+    showToast(error.message || 'Could not give up.');
+  }
+}
+
+async function flushPendingBoard() {
+  if (!state.localBoardDirty) return;
+  await syncLocalBoard();
+}
+
+function openConfirm({ title, message, confirmText, action }) {
+  state.confirmAction = action;
+  el.confirmTitle.textContent = title;
+  el.confirmMessage.textContent = message;
+  el.acceptConfirm.textContent = confirmText;
+  show(el.confirmOverlay);
+}
+
+function closeConfirm() {
+  state.confirmAction = null;
+  hide(el.confirmOverlay);
+}
+
 function updateTimerTick(active) {
   if (!active) {
     clearTimerTick();
@@ -755,6 +1028,19 @@ function formatDuration(seconds) {
     return `${hours}:${pad2(minutes)}:${pad2(remaining)}`;
   }
   return `${minutes}:${pad2(remaining)}`;
+}
+
+function formatSignedPoints(points) {
+  const value = Number(points) || 0;
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function formatTimestamp(value) {
+  if (!value) return '';
+  return new Date(`${value.replace(' ', 'T')}Z`).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function pad2(value) {

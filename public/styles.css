@@ -304,24 +304,31 @@ h2 {
 
 .rank-button {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   border: 1px solid rgba(245, 158, 11, 0.5);
   background: #111827;
-  font-size: 1.24rem;
+  font-size: 1.12rem;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
 }
 
-.rank-button::after {
-  content: "";
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: #22c55e;
-  box-shadow: 0 0 0 2px #111827;
+.rank-button b {
+  display: none;
+  color: #fde68a;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.rank-button.has-rank {
+  width: auto;
+  min-width: 58px;
+  padding: 0 8px;
+}
+
+.rank-button.has-rank b {
+  display: inline;
 }
 
 .share {
@@ -417,21 +424,46 @@ h2 {
 
 .numbers {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
   width: min(var(--board-size), 100%);
 }
 
 .numbers button {
   min-width: 0;
+  min-height: 38px;
   padding: 0;
   aspect-ratio: 1;
   background: #0f766e;
+  font-size: 0.98rem;
 }
 
 .numbers .delete-number {
   background: #374151;
-  font-size: 1.8rem;
+  font-size: 1.5rem;
+}
+
+.numbers .undo-number {
+  background: #334155;
+  font-size: 1.25rem;
+}
+
+.game-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
+  gap: 8px;
+  width: min(var(--board-size), 100%);
+}
+
+.game-actions button {
+  min-height: 40px;
+  padding: 0 10px;
+  background: #334155;
+  font-size: 0.88rem;
+}
+
+.game-actions #giveUp {
+  background: #7f1d1d;
 }
 
 .sync-status {
@@ -454,12 +486,12 @@ h2 {
 
 @media (min-width: 560px) {
   .numbers {
-    grid-template-columns: repeat(10, 1fr);
+    grid-template-columns: repeat(11, 1fr);
   }
 
   .numbers button {
     aspect-ratio: auto;
-    min-height: 56px;
+    min-height: 52px;
   }
 }
 
@@ -502,18 +534,6 @@ h2 {
 #scoreList {
   display: grid;
   gap: 10px;
-}
-
-.rank-indicator {
-  width: min(var(--board-size), 100%);
-  border: 1px solid rgba(15, 23, 42, 0.16);
-  border-radius: 8px;
-  background: #111827;
-  color: #ffffff;
-  padding: 10px 14px;
-  font-weight: 900;
-  text-align: center;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
 .toast {
@@ -738,6 +758,11 @@ h2 {
   color: var(--good);
 }
 
+.status.gave-up {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .score-progress {
   grid-column: 2;
   height: 8px;
@@ -777,6 +802,129 @@ h2 {
   color: var(--good);
   font-size: 0.82rem;
   font-weight: 800;
+}
+
+.review-button {
+  grid-column: 2;
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 12px;
+  background: #334155;
+  font-size: 0.82rem;
+}
+
+.review-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.review-header,
+.review-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.review-header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.review-header .icon-button {
+  min-height: 36px;
+  width: 36px;
+  min-width: 36px;
+  background: #374151;
+}
+
+.review-timeline {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 6px;
+}
+
+.timeline-row strong,
+.timeline-row span {
+  font-size: 0.84rem;
+}
+
+.timeline-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.review-board {
+  --board-size: min(66vw, 280px);
+  width: min(100%, 280px);
+  height: auto;
+  justify-self: center;
+  aspect-ratio: 1;
+  border-width: 2px;
+}
+
+.review-board .cell {
+  font-size: clamp(0.85rem, 3.5vw, 1.45rem);
+}
+
+.review-controls button {
+  flex: 1;
+  min-height: 38px;
+  background: #0f766e;
+}
+
+.review-controls #resetReplay {
+  background: #334155;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.confirm-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 340px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24);
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.confirm-actions button:first-child {
+  background: #475569;
+}
+
+.confirm-actions button:last-child {
+  background: #7f1d1d;
 }
 
 .result {

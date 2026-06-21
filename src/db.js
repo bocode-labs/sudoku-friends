@@ -39,6 +39,7 @@ export function createDatabase(dataDir = process.env.DATA_DIR || './data') {
       player_id text not null references players(id) on delete cascade,
       cell integer not null,
       value integer not null,
+      active integer not null default 1,
       created_at text not null default current_timestamp
     );
 
@@ -51,6 +52,16 @@ export function createDatabase(dataDir = process.env.DATA_DIR || './data') {
       points integer not null default 20,
       awarded_at text not null default current_timestamp,
       unique(game_id, type, unit)
+    );
+
+    create table if not exists player_events (
+      id integer primary key autoincrement,
+      game_id integer not null references games(id) on delete cascade,
+      player_id text not null references players(id) on delete cascade,
+      type text not null,
+      points integer not null default 0,
+      note text,
+      created_at text not null default current_timestamp
     );
   `);
   migrateDatabase(db);
@@ -66,6 +77,27 @@ function migrateDatabase(db) {
   if (!playerColumns.has('completed_at')) {
     db.prepare('alter table players add column completed_at text').run();
   }
+  if (!playerColumns.has('gave_up')) {
+    db.prepare('alter table players add column gave_up integer not null default 0').run();
+  }
+  if (!playerColumns.has('gave_up_at')) {
+    db.prepare('alter table players add column gave_up_at text').run();
+  }
+  const moveColumns = new Set(db.prepare('pragma table_info(moves)').all().map((column) => column.name));
+  if (!moveColumns.has('active')) {
+    db.prepare('alter table moves add column active integer not null default 1').run();
+  }
+  db.exec(`
+    create table if not exists player_events (
+      id integer primary key autoincrement,
+      game_id integer not null references games(id) on delete cascade,
+      player_id text not null references players(id) on delete cascade,
+      type text not null,
+      points integer not null default 0,
+      note text,
+      created_at text not null default current_timestamp
+    );
+  `);
 }
 
 export function serialize(values) {
