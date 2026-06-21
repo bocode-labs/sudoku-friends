@@ -275,12 +275,7 @@ h2 {
 }
 
 .rank-indicator {
-  position: fixed;
-  left: 50%;
-  bottom: 12px;
-  z-index: 10;
-  transform: translateX(-50%);
-  min-width: min(92vw, 280px);
+  width: min(var(--board-size), 100%);
   border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: 8px;
   background: #111827;
@@ -288,7 +283,7 @@ h2 {
   padding: 10px 14px;
   font-weight: 900;
   text-align: center;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
 .toast {
