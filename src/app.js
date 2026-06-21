@@ -189,6 +189,10 @@ function createRoutes({ db, streams }) {
 }
 
 function routeBasePath(req) {
+  const forwardedPrefix = req.get('x-forwarded-prefix');
+  if (forwardedPrefix) {
+    return forwardedPrefix.endsWith('/') ? forwardedPrefix.slice(0, -1) : forwardedPrefix;
+  }
   return req.baseUrl === '/' ? '' : req.baseUrl;
 }
 
