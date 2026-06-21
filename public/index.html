@@ -22,34 +22,54 @@
           <p class="eyebrow">Sudoku Friends</p>
           <h1 id="title">Play together</h1>
         </div>
-        <button id="toggleScores" class="icon-button" type="button" title="Toggle rankings">#</button>
+        <button id="toggleScores" class="icon-button rank-button" type="button" title="Toggle rankings" aria-label="Toggle rankings">🏆</button>
       </header>
 
-      <section id="createView" class="panel">
-        <label for="difficulty">Difficulty</label>
-        <select id="difficulty">
-          <option value="easy">Easy</option>
-          <option value="medium" selected>Medium</option>
-          <option value="hard">Hard</option>
-          <option value="expert">Expert</option>
-        </select>
-        <button id="createGame" type="button">Create game</button>
+      <section id="createView" class="panel start-card">
+        <div class="panel-heading">
+          <span class="panel-icon" aria-hidden="true">✦</span>
+          <div>
+            <h2>Start a table</h2>
+            <p class="muted">Pick a puzzle, share the link, and race your friends live.</p>
+          </div>
+        </div>
+        <div class="control-card">
+          <label for="difficulty">Difficulty</label>
+          <select id="difficulty">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Hard</option>
+            <option value="expert">Expert</option>
+          </select>
+          <p class="helper-text">Medium keeps the first round social. Expert is for rematches.</p>
+        </div>
+        <button id="createGame" class="primary-action" type="button"><span aria-hidden="true">＋</span>Create game</button>
       </section>
 
-      <section id="lobbyView" class="panel hidden">
-        <div class="share">
+      <section id="lobbyView" class="panel lobby-card hidden">
+        <div class="panel-heading">
+          <span class="panel-icon share-icon" aria-hidden="true">⌁</span>
+          <div>
+            <h2>Invite players</h2>
+            <p class="muted">Send the room link, then join with a display name.</p>
+          </div>
+        </div>
+        <div class="share control-card">
           <label for="shareUrl">Share URL</label>
           <div class="share-row">
             <input id="shareUrl" readonly />
-            <button id="copyShareUrl" type="button">Copy</button>
+            <button id="copyShareUrl" type="button"><span aria-hidden="true">⧉</span>Copy</button>
           </div>
+          <p class="helper-text">Anyone with this link can enter the lobby.</p>
         </div>
-        <div id="joinForm">
-          <label for="playerName">Your name</label>
-          <input id="playerName" maxlength="32" autocomplete="name" />
-          <button id="joinGame" type="button">Join lobby</button>
+        <div id="joinForm" class="control-card join-card">
+          <div>
+            <label for="playerName">Your name</label>
+            <input id="playerName" maxlength="32" autocomplete="name" placeholder="Player name" />
+          </div>
+          <button id="joinGame" class="primary-action" type="button"><span aria-hidden="true">→</span>Join lobby</button>
         </div>
-        <button id="startGame" class="hidden" type="button">Start</button>
+        <button id="startGame" class="primary-action start-action hidden" type="button"><span aria-hidden="true">▶</span>Start</button>
         <p id="waitingText" class="muted">Waiting for the host to start.</p>
       </section>
 

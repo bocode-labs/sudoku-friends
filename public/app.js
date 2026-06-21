@@ -270,21 +270,42 @@ function clearInvalidSelection(puzzle) {
 
 function renderScores(players) {
   el.scoreList.replaceChildren();
-  for (const player of players) {
+  if (players.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'score-empty muted';
+    empty.textContent = 'Rankings appear once players join.';
+    el.scoreList.append(empty);
+    return;
+  }
+
+  players.forEach((player, index) => {
+    const position = index + 1;
     const row = document.createElement('div');
-    row.className = `score-row${player.id === state.playerId ? ' is-current' : ''}`;
+    row.className = `score-row rank-${position <= 3 ? position : 'standard'}${player.id === state.playerId ? ' is-current' : ''}`;
+
+    const badge = document.createElement('div');
+    badge.className = 'score-place';
+    badge.setAttribute('aria-label', `${ordinal(position)} place`);
+    badge.append(rankIcon(position));
 
     const header = document.createElement('div');
     header.className = 'score-header';
 
+    const identity = document.createElement('div');
+    identity.className = 'score-identity';
+
     const name = document.createElement('strong');
     name.textContent = player.name;
+
+    const rankLabel = document.createElement('span');
+    rankLabel.textContent = ordinal(position);
+    identity.append(name, rankLabel);
 
     const status = document.createElement('span');
     status.className = player.correct ? 'status solved' : 'status';
     status.textContent = player.correct ? 'Solved' : player.completed ? 'Full' : `${player.progress.percent}%`;
 
-    header.append(name, status);
+    header.append(identity, status);
 
     const progress = document.createElement('div');
     progress.className = 'score-progress';
@@ -305,12 +326,12 @@ function renderScores(players) {
       const rank = document.createElement('div');
       rank.className = 'score-rank';
       rank.textContent = player.finishRank ? `#${player.finishRank} correct` : 'Correct';
-      row.append(header, progress, meta, rank);
+      row.append(badge, header, progress, meta, rank);
     } else {
-      row.append(header, progress, meta);
+      row.append(badge, header, progress, meta);
     }
     el.scoreList.append(row);
-  }
+  });
 }
 
 function renderRankIndicator(players) {
@@ -417,6 +438,13 @@ function metaItem(label, value) {
   valueNode.textContent = value;
   item.append(labelNode, valueNode);
   return item;
+}
+
+function rankIcon(position) {
+  const icon = document.createElement('span');
+  icon.className = 'rank-icon';
+  icon.textContent = { 1: '🥇', 2: '🥈', 3: '🥉' }[position] || String(position);
+  return icon;
 }
 
 async function submitValue(value) {
@@ -540,9 +568,16 @@ async function copyShareUrl() {
   if (copied) {
     el.copyShareUrl.textContent = 'Copied';
     setTimeout(() => {
-      el.copyShareUrl.textContent = 'Copy';
+      setCopyButtonLabel();
     }, 1400);
   }
+}
+
+function setCopyButtonLabel() {
+  const icon = document.createElement('span');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = '⧉';
+  el.copyShareUrl.replaceChildren(icon, 'Copy');
 }
 
 function showToast(message) {
