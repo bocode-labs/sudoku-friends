@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sudoku Friends</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Sudoku Friends</p>
+          <h1 id="title">Play together</h1>
+        </div>
+        <button id="toggleScores" class="icon-button" type="button" title="Toggle rankings">#</button>
+      </header>
+
+      <section id="createView" class="panel">
+        <label for="difficulty">Difficulty</label>
+        <select id="difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+          <option value="expert">Expert</option>
+        </select>
+        <button id="createGame" type="button">Create game</button>
+      </section>
+
+      <section id="lobbyView" class="panel hidden">
+        <div class="share">
+          <label for="shareUrl">Share URL</label>
+          <input id="shareUrl" readonly />
+        </div>
+        <div id="joinForm">
+          <label for="playerName">Your name</label>
+          <input id="playerName" maxlength="32" autocomplete="name" />
+          <button id="joinGame" type="button">Join lobby</button>
+        </div>
+        <button id="startGame" class="hidden" type="button">Start</button>
+        <p id="waitingText" class="muted">Waiting for the host to start.</p>
+      </section>
+
+      <section id="playView" class="hidden">
+        <div id="board" class="board" aria-label="Sudoku board"></div>
+        <div id="numbers" class="numbers" aria-label="Number buttons"></div>
+        <p id="result" class="result"></p>
+      </section>
+
+      <aside id="scores" class="scores">
+        <h2>Progress</h2>
+        <div id="scoreList"></div>
+      </aside>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "sudoku-friends",
+  "version": "1.0.0",
+  "description": "Realtime multiplayer Sudoku for friends.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
