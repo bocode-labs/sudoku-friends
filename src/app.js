@@ -15,12 +15,23 @@ export function createApp({ db = createDatabase() } = {}) {
   app.locals.db = db;
   app.use(express.json());
   app.use(express.static(publicDir));
+  app.use('/sudoku', express.static(publicDir));
 
-  app.get('/health', (req, res) => {
+  const routes = createRoutes({ db, streams });
+  app.use(routes);
+  app.use('/sudoku', routes);
+
+  return app;
+}
+
+function createRoutes({ db, streams }) {
+  const routes = express.Router();
+
+  routes.get('/health', (req, res) => {
     res.json({ ok: true });
   });
 
-  app.post('/api/games', (req, res) => {
+  routes.post('/api/games', (req, res) => {
     const difficulty = req.body?.difficulty || 'medium';
     if (!DIFFICULTIES[difficulty]) {
       return res.status(400).json({ error: 'Invalid difficulty' });
@@ -38,12 +49,12 @@ export function createApp({ db = createDatabase() } = {}) {
         code,
         hostToken,
         difficulty,
-        shareUrl: `/g/${code}`
+        shareUrl: `${routeBasePath(req)}/g/${code}`
       }
     });
   });
 
-  app.post('/api/games/:code/players', (req, res) => {
+  routes.post('/api/games/:code/players', (req, res) => {
     const game = findGame(db, req.params.code);
     if (!game) {
       return res.status(404).json({ error: 'Game not found' });
@@ -70,7 +81,7 @@ export function createApp({ db = createDatabase() } = {}) {
     return res.status(201).json({ player });
   });
 
-  app.post('/api/games/:code/start', (req, res) => {
+  routes.post('/api/games/:code/start', (req, res) => {
     const game = findGame(db, req.params.code);
     if (!game) {
       return res.status(404).json({ error: 'Game not found' });
@@ -85,7 +96,7 @@ export function createApp({ db = createDatabase() } = {}) {
     return res.json({ ok: true });
   });
 
-  app.get('/api/games/:code', (req, res) => {
+  routes.get('/api/games/:code', (req, res) => {
     const state = snapshot(db, req.params.code, req.query.playerId);
     if (!state) {
       return res.status(404).json({ error: 'Game not found' });
@@ -93,7 +104,7 @@ export function createApp({ db = createDatabase() } = {}) {
     return res.json(state);
   });
 
-  app.post('/api/games/:code/moves', (req, res) => {
+  routes.post('/api/games/:code/moves', (req, res) => {
     const game = findGame(db, req.params.code);
     if (!game) {
       return res.status(404).json({ error: 'Game not found' });
@@ -142,7 +153,7 @@ export function createApp({ db = createDatabase() } = {}) {
     return res.json(body);
   });
 
-  app.get('/api/games/:code/events', (req, res) => {
+  routes.get('/api/games/:code/events', (req, res) => {
     const game = findGame(db, req.params.code);
     if (!game) {
       return res.status(404).end();
@@ -170,11 +181,15 @@ export function createApp({ db = createDatabase() } = {}) {
     });
   });
 
-  app.get('/g/:code', (req, res) => {
+  routes.get('/g/:code', (req, res) => {
     res.sendFile(join(publicDir, 'index.html'));
   });
 
-  return app;
+  return routes;
+}
+
+function routeBasePath(req) {
+  return req.baseUrl === '/' ? '' : req.baseUrl;
 }
 
 function snapshot(db, code, playerId) {

@@ -1,5 +1,8 @@
+const basePath = detectBasePath(location.pathname);
+const routePath = stripBasePath(location.pathname);
+
 const state = {
-  code: location.pathname.startsWith('/g/') ? location.pathname.split('/').pop() : null,
+  code: routePath.startsWith('/g/') ? routePath.split('/').pop() : null,
   hostToken: '',
   playerId: '',
   selected: null,
@@ -43,7 +46,7 @@ el.createGame.addEventListener('click', async () => {
   state.code = res.game.code;
   state.hostToken = res.game.hostToken;
   localStorage.setItem(`sf:hostToken:${state.code}`, state.hostToken);
-  history.replaceState(null, '', `/g/${state.code}`);
+  history.replaceState(null, '', withBasePath(`/g/${state.code}`));
   renderRoute();
 });
 
@@ -86,7 +89,7 @@ async function renderRoute() {
   state.playerId = localStorage.getItem(`sf:playerId:${state.code}`) || '';
   hide(el.createView);
   show(el.lobbyView);
-  el.shareUrl.value = `${location.origin}/g/${state.code}`;
+  el.shareUrl.value = `${location.origin}${withBasePath(`/g/${state.code}`)}`;
   el.title.textContent = `Lobby ${state.code}`;
   connectEvents();
   await loadState();
@@ -175,7 +178,7 @@ async function submitValue(value) {
 function connectEvents() {
   if (!state.code || state.events) return;
   const suffix = state.playerId ? `?playerId=${encodeURIComponent(state.playerId)}` : '';
-  state.events = new EventSource(`/api/games/${state.code}/events${suffix}`);
+  state.events = new EventSource(withBasePath(`/api/games/${state.code}/events${suffix}`));
   state.events.addEventListener('state', (event) => {
     state.snapshot = JSON.parse(event.data);
     renderSnapshot();
@@ -188,7 +191,7 @@ function connectEvents() {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(withBasePath(path), {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined
@@ -198,6 +201,18 @@ async function api(path, { method = 'GET', body } = {}) {
     throw new Error(payload.error || `Request failed: ${res.status}`);
   }
   return payload;
+}
+
+function detectBasePath(pathname) {
+  return pathname === '/sudoku' || pathname.startsWith('/sudoku/') ? '/sudoku' : '';
+}
+
+function stripBasePath(pathname) {
+  return basePath && pathname.startsWith(basePath) ? pathname.slice(basePath.length) || '/' : pathname;
+}
+
+function withBasePath(path) {
+  return `${basePath}${path}`;
 }
 
 function show(...nodes) {

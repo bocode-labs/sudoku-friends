@@ -4,7 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sudoku Friends</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <script>
+      (() => {
+        const basePath =
+          location.pathname === '/sudoku' || location.pathname.startsWith('/sudoku/') ? '/sudoku' : '';
+        const stylesheet = document.createElement('link');
+        stylesheet.rel = 'stylesheet';
+        stylesheet.href = `${basePath}/styles.css`;
+        document.head.append(stylesheet);
+      })();
+    </script>
   </head>
   <body>
     <main class="shell">
@@ -53,6 +62,15 @@
       </aside>
     </main>
 
-    <script src="/app.js" type="module"></script>
+    <script>
+      (() => {
+        const basePath =
+          location.pathname === '/sudoku' || location.pathname.startsWith('/sudoku/') ? '/sudoku' : '';
+        const script = document.createElement('script');
+        script.src = `${basePath}/app.js`;
+        script.type = 'module';
+        document.currentScript.after(script);
+      })();
+    </script>
   </body>
 </html>
