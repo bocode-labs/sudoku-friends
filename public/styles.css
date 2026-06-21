@@ -721,7 +721,7 @@ h2 {
 }
 
 .hub-tv {
-  width: min(100%, 520px);
+  width: min(100%, 360px);
   justify-self: center;
 }
 
