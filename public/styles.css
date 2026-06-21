@@ -448,19 +448,41 @@ h2 {
   font-size: 0.98rem;
 }
 
+.numbers .number-1 { order: 1; }
+.numbers .number-2 { order: 2; }
+.numbers .number-3 { order: 3; }
+.numbers .number-4 { order: 4; }
+.numbers .number-5 { order: 5; }
+.numbers .undo-number { order: 6; }
+.numbers .number-6 { order: 7; }
+.numbers .number-7 { order: 8; }
+.numbers .number-8 { order: 9; }
+.numbers .number-9 { order: 10; }
+.numbers .delete-number { order: 11; }
+.numbers .rollback-number { order: 12; }
+
 .numbers .delete-number {
   background: #374151;
   font-size: 1.5rem;
 }
 
-.numbers .undo-number {
+.numbers .undo-number,
+.numbers .rollback-number {
+  border-left: 2px solid rgba(255, 255, 255, 0.85);
   background: #334155;
-  font-size: 1.25rem;
+  font-size: 1.18rem;
+}
+
+.numbers .rollback-number {
+  padding: 0 6px;
+  background: #7c3aed;
+  font-size: 0.68rem;
+  line-height: 1.05;
 }
 
 .game-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
+  grid-template-columns: 1fr;
   gap: 8px;
   width: min(var(--board-size), 100%);
 }
@@ -495,13 +517,9 @@ h2 {
 }
 
 @media (min-width: 560px) {
-  .numbers {
-    grid-template-columns: repeat(11, 1fr);
-  }
-
   .numbers button {
     aspect-ratio: auto;
-    min-height: 52px;
+    min-height: 46px;
   }
 }
 

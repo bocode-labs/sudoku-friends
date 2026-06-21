@@ -99,6 +99,7 @@ const el = {
 for (let value = 1; value <= 9; value += 1) {
   const button = document.createElement('button');
   button.type = 'button';
+  button.className = `number-button number-${value}`;
   button.textContent = String(value);
   button.addEventListener('click', () => submitValue(value));
   el.numbers.append(button);
@@ -116,9 +117,11 @@ const undoButton = document.createElement('button');
 undoButton.type = 'button';
 undoButton.className = 'undo-number';
 undoButton.setAttribute('aria-label', 'Undo last local edit');
-undoButton.textContent = '↶';
+undoButton.textContent = '↺';
 undoButton.addEventListener('click', undoLocalEdit);
 el.numbers.append(undoButton);
+el.rewindMistake.classList.add('rollback-number');
+el.numbers.append(el.rewindMistake);
 
 el.createGame.addEventListener('click', async () => {
   if (!el.hostName.value.trim()) {
