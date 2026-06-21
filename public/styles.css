@@ -225,7 +225,18 @@ h2 {
 
 .numbers .delete-number {
   background: #374151;
-  font-size: 1.4rem;
+  font-size: 1.8rem;
+}
+
+@media (min-width: 560px) {
+  .numbers {
+    grid-template-columns: repeat(10, 1fr);
+  }
+
+  .numbers button {
+    aspect-ratio: auto;
+    min-height: 56px;
+  }
 }
 
 .scores.hidden-local {

@@ -47,7 +47,7 @@ const deleteButton = document.createElement('button');
 deleteButton.type = 'button';
 deleteButton.className = 'delete-number';
 deleteButton.setAttribute('aria-label', 'Remove selected number');
-deleteButton.textContent = '⌫';
+deleteButton.textContent = '×';
 deleteButton.addEventListener('click', () => submitValue(0));
 el.numbers.append(deleteButton);
 
