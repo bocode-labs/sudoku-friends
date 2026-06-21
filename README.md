@@ -24,7 +24,7 @@ The database file is `${DATA_DIR}/sudoku-friends.sqlite`.
 - `src/server.js`: production entrypoint.
 - `src/app.js`: Express app, JSON API, SSE endpoint, static file serving.
 - `src/db.js`: SQLite connection and schema.
-- `src/sudoku.js`: backtracking Sudoku solution generation, clue removal by difficulty, and validation.
+- `src/sudoku.js`: randomized backtracking Sudoku solution generation, symmetric clue removal with a bounded solution counter to preserve a unique solution, and validation.
 - `public/`: browser UI.
 - `test/`: Node test runner tests for generation/validation and core API flow.
 

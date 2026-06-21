@@ -43,6 +43,11 @@ button:disabled {
   opacity: 0.55;
 }
 
+.cell:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 input,
 select {
   width: 100%;
@@ -66,7 +71,7 @@ label {
   display: grid;
   grid-template-columns: 1fr;
   gap: 16px;
-  width: min(100%, 980px);
+  width: min(100%, 1120px);
   margin: 0 auto;
   padding: 16px;
 }
@@ -248,7 +253,7 @@ h2 {
 
 @media (min-width: 760px) {
   .shell {
-    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-columns: minmax(0, 700px) 260px;
     align-items: start;
     padding: 28px;
   }
