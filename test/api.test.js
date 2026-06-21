@@ -103,6 +103,10 @@ function post(app, path, body) {
   return appRequest(app, 'POST', path, body);
 }
 
+function put(app, path, body) {
+  return appRequest(app, 'PUT', path, body);
+}
+
 function get(app, path) {
   return appRequest(app, 'GET', path);
 }
@@ -380,6 +384,113 @@ test('delete moves accept numeric zero and string zero values', async () => {
     });
     assert.equal(stringDelete.status, 200);
     assert.equal(stringDelete.body.progress.filled, 0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('full-board sync saves the latest board snapshot and awards completion milestones', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const board = rowZeroPuzzle();
+    for (let cell = 0; cell < 9; cell += 1) {
+      board[cell] = SOLUTION[cell];
+    }
+
+    const synced = await put(t.app, `/api/games/${code}/board`, {
+      playerId: joined.body.player.id,
+      board
+    });
+    assert.equal(synced.status, 200);
+    assert.equal(synced.body.accepted, true);
+    assert.equal(synced.body.complete, true);
+    assert.equal(synced.body.correct, true);
+    assert.deepEqual(synced.body.progress, { filled: 9, total: 9, percent: 100 });
+
+    const snapshot = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    const player = snapshot.body.players.find((item) => item.id === joined.body.player.id);
+    assert.deepEqual(snapshot.body.player.board.slice(0, 9), SOLUTION.slice(0, 9));
+    assert.equal(player.finishPoints, 100);
+    assert.equal(player.awards.reduce((total, award) => total + award.points, 0), 150);
+    assert.ok(player.awards.some((award) => award.type === 'row' && award.unit === 0));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('full-board sync can delete values by sending zeroes', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const filled = rowZeroPuzzle();
+    filled[0] = SOLUTION[0];
+    filled[1] = SOLUTION[1];
+    const setBoard = await put(t.app, `/api/games/${code}/board`, {
+      playerId: joined.body.player.id,
+      board: filled
+    });
+    assert.equal(setBoard.status, 200);
+    assert.equal(setBoard.body.progress.filled, 2);
+
+    const deleted = filled.slice();
+    deleted[1] = 0;
+    const deleteBoard = await put(t.app, `/api/games/${code}/board`, {
+      playerId: joined.body.player.id,
+      board: deleted
+    });
+    assert.equal(deleteBoard.status, 200);
+    assert.equal(deleteBoard.body.progress.filled, 1);
+
+    const snapshot = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    assert.deepEqual(snapshot.body.player.board.slice(0, 2), [SOLUTION[0], 0]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('full-board sync rejects board changes to given cells', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const board = rowZeroPuzzle();
+    board[9] = 9;
+    const rejected = await put(t.app, `/api/games/${code}/board`, {
+      playerId: joined.body.player.id,
+      board
+    });
+    assert.equal(rejected.status, 409);
+    assert.match(rejected.body.error, /given cell/i);
+
+    const snapshot = await get(t.app, `/api/games/${code}?playerId=${joined.body.player.id}`);
+    assert.equal(snapshot.body.player.board[9], SOLUTION[9]);
   } finally {
     t.cleanup();
   }

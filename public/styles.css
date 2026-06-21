@@ -434,6 +434,24 @@ h2 {
   font-size: 1.8rem;
 }
 
+.sync-status {
+  min-height: 22px;
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.sync-status.is-saving {
+  color: #0f766e;
+}
+
+.sync-status.is-offline,
+.sync-status.is-error {
+  color: #92400e;
+}
+
 @media (min-width: 560px) {
   .numbers {
     grid-template-columns: repeat(10, 1fr);

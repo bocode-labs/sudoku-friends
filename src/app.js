@@ -27,6 +27,35 @@ export function createApp({ db = createDatabase() } = {}) {
 function createRoutes({ db, streams }) {
   const routes = express.Router();
 
+  function handleBoardSync(req, res) {
+    const game = findGame(db, req.params.code);
+    if (!game) {
+      return res.status(404).json({ error: 'Game not found' });
+    }
+    if (game.status !== 'playing') {
+      return res.status(409).json({ error: 'Game has not started' });
+    }
+
+    const player = db.prepare('select * from players where id = ? and game_id = ?').get(req.body?.playerId, game.id);
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+    if (player.correct) {
+      return res.status(409).json({ error: 'Solved boards are locked' });
+    }
+
+    const puzzle = deserialize(game.puzzle);
+    const board = validateBoard(req.body?.board, puzzle);
+    if (board.error) {
+      return res.status(board.status).json({ error: board.error });
+    }
+
+    const result = savePlayerBoard(db, game, player, board.value, deserialize(player.board));
+    broadcast(streams, db, game.code);
+
+    return res.json(responseForSave(result));
+  }
+
   routes.get('/health', (req, res) => {
     res.json({ ok: true });
   });
@@ -130,47 +159,21 @@ function createRoutes({ db, streams }) {
       return res.status(409).json({ error: 'Cannot edit a given cell' });
     }
 
-    const board = deserialize(player.board);
+    const previousBoard = deserialize(player.board);
     if (player.correct) {
       return res.status(409).json({ error: 'Solved boards are locked' });
     }
+    const board = previousBoard.slice();
     board[cell] = value;
-    const solution = deserialize(game.solution);
-    const complete = board.every((boardValue) => boardValue !== 0);
-    const correct = complete ? isCompleteAndCorrect(board, solution) : undefined;
-    const completedAt = complete && correct && !player.completed_at ? timestamp() : player.completed_at;
-    const finishPoints =
-      complete && correct && !player.correct ? calculateFinishPoints(db, game.id, completedAt) : player.finish_points;
-
-    const saveMove = db.transaction(() => {
-      db.prepare(
-        'update players set board = ?, score = ?, finish_points = ?, completed = ?, correct = ?, completed_at = ? where id = ?'
-      ).run(
-        serialize(board),
-        progressFor(board, puzzle).filled,
-        finishPoints,
-        complete ? 1 : 0,
-        correct === undefined ? null : correct ? 1 : 0,
-        completedAt,
-        player.id
-      );
-      db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(player.id, cell, value);
-      awardMilestones(db, game.id, player.id, board, solution, cell, value);
-    });
-    saveMove();
+    const result = savePlayerBoard(db, game, player, board, previousBoard, { cell, value });
 
     broadcast(streams, db, game.code);
 
-    const body = {
-      accepted: true,
-      complete,
-      progress: progressFor(board, puzzle)
-    };
-    if (complete) {
-      body.correct = correct;
-    }
-    return res.json(body);
+    return res.json(responseForSave(result));
   });
+
+  routes.put('/api/games/:code/board', handleBoardSync);
+  routes.post('/api/games/:code/board', handleBoardSync);
 
   routes.get('/api/games/:code/events', (req, res) => {
     const game = findGame(db, req.params.code);
@@ -318,6 +321,74 @@ function progressFor(board, puzzle) {
   };
 }
 
+function validateBoard(value, puzzle) {
+  if (!Array.isArray(value) || value.length !== 81) {
+    return { status: 400, error: 'Board must include 81 values' };
+  }
+
+  const board = value.map((cell) => {
+    if (typeof cell === 'string' && cell.trim() !== '') {
+      return Number(cell);
+    }
+    return typeof cell === 'number' ? cell : NaN;
+  });
+  if (board.some((cell) => !Number.isInteger(cell) || cell < 0 || cell > 9)) {
+    return { status: 400, error: 'Board values must be integers from 0-9' };
+  }
+
+  const editedGiven = board.findIndex((cell, index) => puzzle[index] !== 0 && cell !== puzzle[index]);
+  if (editedGiven !== -1) {
+    return { status: 409, error: 'Cannot edit a given cell' };
+  }
+
+  return { value: board };
+}
+
+function savePlayerBoard(db, game, player, board, previousBoard, move = null) {
+  const puzzle = deserialize(game.puzzle);
+  const solution = deserialize(game.solution);
+  const complete = board.every((boardValue) => boardValue !== 0);
+  const correct = complete ? isCompleteAndCorrect(board, solution) : undefined;
+  const completedAt = complete && correct && !player.completed_at ? timestamp() : player.completed_at;
+  const finishPoints =
+    complete && correct && !player.correct ? calculateFinishPoints(db, game.id, completedAt) : player.finish_points;
+  const progress = progressFor(board, puzzle);
+
+  const save = db.transaction(() => {
+    db.prepare(
+      'update players set board = ?, score = ?, finish_points = ?, completed = ?, correct = ?, completed_at = ? where id = ?'
+    ).run(
+      serialize(board),
+      progress.filled,
+      finishPoints,
+      complete ? 1 : 0,
+      correct === undefined ? null : correct ? 1 : 0,
+      completedAt,
+      player.id
+    );
+    if (move) {
+      db.prepare('insert into moves (player_id, cell, value) values (?, ?, ?)').run(player.id, move.cell, move.value);
+    }
+    awardBoardMilestones(db, game.id, player.id, board, previousBoard, solution);
+  });
+  save();
+
+  return { complete, correct, progress, board };
+}
+
+function responseForSave(result) {
+  const body = {
+    accepted: true,
+    complete: result.complete,
+    progress: result.progress,
+    board: result.board
+  };
+  if (result.complete) {
+    body.correct = result.correct;
+  }
+  return body;
+}
+
 function timerFor(startedAt, completedAt, status) {
   if (!startedAt || status !== 'playing') {
     return { elapsedSeconds: 0, finished: false };
@@ -375,6 +446,14 @@ function awardMilestones(db, gameId, playerId, board, solution, cell, value) {
       db.prepare(
         'insert or ignore into event_awards (game_id, player_id, type, unit, points) values (?, ?, ?, ?, ?)'
       ).run(gameId, playerId, award.type, award.unit, award.points);
+    }
+  }
+}
+
+function awardBoardMilestones(db, gameId, playerId, board, previousBoard, solution) {
+  for (let cell = 0; cell < board.length; cell += 1) {
+    if (board[cell] !== previousBoard[cell]) {
+      awardMilestones(db, gameId, playerId, board, solution, cell, board[cell]);
     }
   }
 }

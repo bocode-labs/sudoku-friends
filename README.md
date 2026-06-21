@@ -50,6 +50,7 @@ The progress panel intentionally displays `n/91` as requested. The denominator i
 - `POST /api/games/:code/players` with `{ "name": "Ada" }`
 - `POST /api/games/:code/start` with `{ "hostToken": "..." }`
 - `GET /api/games/:code?playerId=...`
+- `PUT /api/games/:code/board` with `{ "playerId": "...", "board": [81 values from 0-9] }`
 - `POST /api/games/:code/moves` with `{ "playerId": "...", "cell": 0, "value": 5 }`
 
 ## Coolify

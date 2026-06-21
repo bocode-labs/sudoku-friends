@@ -15,8 +15,11 @@ const state = {
   renderedBoardKey: '',
   renderedWatchBoardKey: '',
   localBoard: null,
-  pendingMoves: new Map(),
-  moveSeq: 0,
+  localBoardDirty: false,
+  syncInFlight: false,
+  syncRetryTimer: null,
+  syncRetryDelay: 1000,
+  syncStatus: 'synced',
   toastTimer: null,
   watchingPlayerId: ''
 };
@@ -42,6 +45,7 @@ const el = {
   waitingPlayersCount: document.querySelector('#waitingPlayersCount'),
   board: document.querySelector('#board'),
   numbers: document.querySelector('#numbers'),
+  syncStatus: document.querySelector('#syncStatus'),
   result: document.querySelector('#result'),
   toggleScores: document.querySelector('#toggleScores'),
   rankIndicator: document.querySelector('#rankIndicator'),
@@ -146,6 +150,16 @@ el.dismissFinish.addEventListener('click', () => {
   hide(el.finishOverlay);
 });
 
+window.addEventListener('online', () => {
+  queueBoardSync({ immediate: true });
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    queueBoardSync({ immediate: true });
+  }
+});
+
 renderRoute();
 
 async function renderRoute() {
@@ -178,28 +192,36 @@ async function loadState() {
 function applyServerSnapshot(snapshot) {
   state.snapshot = snapshot;
   state.snapshotReceivedAt = Date.now();
-  reconcilePendingMoves(snapshot.player?.board || null);
-  state.localBoard = snapshot.player?.board ? boardForDisplay(snapshot.player.board) : null;
-}
-
-function reconcilePendingMoves(serverBoard) {
+  const serverBoard = snapshot.player?.board || null;
   if (!serverBoard) {
-    state.pendingMoves.clear();
+    state.localBoard = null;
+    state.localBoardDirty = false;
+    setSyncStatus('synced');
     return;
   }
-  for (const [cell, move] of state.pendingMoves) {
-    if (serverBoard[cell] === move.value) {
-      state.pendingMoves.delete(cell);
-    }
-  }
-}
 
-function boardForDisplay(serverBoard) {
-  const board = serverBoard.slice();
-  for (const [cell, move] of state.pendingMoves) {
-    board[cell] = move.value;
+  const persisted = loadPersistedBoard();
+  if (persisted?.dirty) {
+    state.localBoard = persisted.board;
+    state.localBoardDirty = true;
   }
-  return board;
+
+  if (state.localBoardDirty && state.localBoard) {
+    if (boardsEqual(state.localBoard, serverBoard)) {
+      markBoardSynced(serverBoard);
+    } else {
+      setSyncStatus(state.syncInFlight ? 'saving' : navigator.onLine === false ? 'offline' : 'retrying');
+      queueBoardSync();
+    }
+    return;
+  }
+
+  state.localBoard = persisted?.board || serverBoard.slice();
+  state.localBoardDirty = Boolean(persisted?.dirty);
+  if (!state.localBoardDirty) {
+    clearPersistedBoard();
+    setSyncStatus('synced');
+  }
 }
 
 function renderSnapshot() {
@@ -504,39 +526,189 @@ async function submitValue(value) {
   if (!snapshot?.player?.board || !puzzle || puzzle[state.selected] !== 0) return;
 
   const cell = state.selected;
-  const seq = state.moveSeq + 1;
-  const rollbackBoard = (state.localBoard || snapshot.player.board).slice();
-  state.moveSeq = seq;
-  state.pendingMoves.set(cell, { seq, value, rollbackBoard });
-  state.localBoard = rollbackBoard.slice();
+  state.localBoard = (state.localBoard || snapshot.player.board).slice();
   state.localBoard[cell] = value;
+  state.localBoardDirty = true;
+  persistLocalBoard(true);
+  setSyncStatus(navigator.onLine === false ? 'offline' : 'saving');
   el.result.textContent = '';
   renderSnapshot();
+  queueBoardSync({ immediate: true });
+}
 
+function queueBoardSync({ immediate = false } = {}) {
+  if (!state.localBoardDirty || !state.localBoard || !state.playerId || !state.code) {
+    return;
+  }
+  if (state.syncRetryTimer) {
+    clearTimeout(state.syncRetryTimer);
+    state.syncRetryTimer = null;
+  }
+  if (navigator.onLine === false) {
+    setSyncStatus('offline');
+    state.syncRetryTimer = setTimeout(() => {
+      state.syncRetryTimer = null;
+      queueBoardSync({ immediate: true });
+    }, state.syncRetryDelay);
+    state.syncRetryDelay = nextRetryDelay();
+    return;
+  }
+  state.syncRetryTimer = setTimeout(() => {
+    state.syncRetryTimer = null;
+    syncLocalBoard();
+  }, immediate ? 0 : state.syncRetryDelay);
+  if (!immediate) {
+    state.syncRetryDelay = nextRetryDelay();
+  }
+}
+
+async function syncLocalBoard() {
+  if (state.syncInFlight || !state.localBoardDirty || !state.localBoard || !state.playerId || !state.code) {
+    return;
+  }
+  if (navigator.onLine === false) {
+    queueBoardSync();
+    return;
+  }
+
+  state.syncInFlight = true;
+  setSyncStatus('saving');
+  const board = state.localBoard.slice();
   try {
-    const res = await api(`/api/games/${state.code}/moves`, {
-      method: 'POST',
-      body: { playerId: state.playerId, cell, value }
+    const res = await api(`/api/games/${state.code}/board`, {
+      method: 'PUT',
+      body: { playerId: state.playerId, board }
     });
-    const pending = state.pendingMoves.get(cell);
-    if (pending?.seq === seq && state.snapshot?.player?.board?.[cell] === value) {
-      state.pendingMoves.delete(cell);
+    if (boardsEqual(state.localBoard, board)) {
+      markBoardSynced(res.board || board);
+    } else {
+      queueBoardSync({ immediate: true });
     }
-    if (seq === state.moveSeq && res.complete) {
+    if (boardsEqual(state.localBoard, board) && res.complete) {
       el.result.textContent = res.correct ? 'Solved correctly.' : 'Board is full, but not correct.';
     }
   } catch (error) {
-    const pending = state.pendingMoves.get(cell);
-    if (pending?.seq === seq) {
-      state.pendingMoves.delete(cell);
-      state.localBoard = pending.rollbackBoard.slice();
-      for (const [pendingCell, move] of state.pendingMoves) {
-        state.localBoard[pendingCell] = move.value;
+    if (isClientSyncError(error)) {
+      showToast(error.message || 'Board was rejected.');
+      try {
+        await reconcileFromServer();
+      } catch (reconcileError) {
+        showToast(reconcileError.message || 'Could not reload board.');
       }
-      renderSnapshot();
+    } else {
+      setSyncStatus(navigator.onLine === false ? 'offline' : 'retrying');
+      queueBoardSync();
     }
-    showToast(error.message || 'Move was not saved.');
+  } finally {
+    state.syncInFlight = false;
+    if (state.localBoardDirty && !state.syncRetryTimer) {
+      queueBoardSync();
+    }
+    renderSyncStatus();
   }
+}
+
+function markBoardSynced(board) {
+  state.localBoard = board.slice();
+  state.localBoardDirty = false;
+  state.syncRetryDelay = 1000;
+  clearPersistedBoard();
+  setSyncStatus('synced');
+}
+
+async function reconcileFromServer() {
+  const suffix = state.playerId ? `?playerId=${encodeURIComponent(state.playerId)}` : '';
+  const snapshot = await api(`/api/games/${state.code}${suffix}`);
+  clearPersistedBoard();
+  state.localBoardDirty = false;
+  state.syncRetryDelay = 1000;
+  state.localBoard = snapshot.player?.board ? snapshot.player.board.slice() : null;
+  applyServerSnapshot(snapshot);
+  renderSnapshot();
+}
+
+function isClientSyncError(error) {
+  return error.status >= 400 && error.status < 500;
+}
+
+function persistLocalBoard(dirty) {
+  const key = localBoardStorageKey();
+  if (!key || !state.localBoard) return;
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      board: state.localBoard,
+      dirty,
+      updatedAt: Date.now()
+    })
+  );
+}
+
+function loadPersistedBoard() {
+  const key = localBoardStorageKey();
+  if (!key) return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!value?.dirty || !Array.isArray(value.board) || value.board.length !== 81) {
+      return null;
+    }
+    const board = value.board.map((cell) => Number(cell));
+    if (board.some((cell) => !Number.isInteger(cell) || cell < 0 || cell > 9)) {
+      clearPersistedBoard();
+      return null;
+    }
+    return { board, dirty: true };
+  } catch {
+    clearPersistedBoard();
+    return null;
+  }
+}
+
+function clearPersistedBoard() {
+  const key = localBoardStorageKey();
+  if (key) {
+    localStorage.removeItem(key);
+  }
+}
+
+function localBoardStorageKey() {
+  return state.code && state.playerId ? `sf:board:${state.code}:${state.playerId}` : '';
+}
+
+function boardsEqual(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function nextRetryDelay() {
+  const delay = state.syncRetryDelay;
+  return Math.min(30000, Math.max(1000, delay * 2));
+}
+
+function setSyncStatus(status) {
+  state.syncStatus = status;
+  renderSyncStatus();
+}
+
+function renderSyncStatus() {
+  el.syncStatus.classList.remove('is-saving', 'is-offline', 'is-error');
+  if (state.syncStatus === 'synced' || !state.localBoardDirty) {
+    el.syncStatus.textContent = '';
+    hide(el.syncStatus);
+    return;
+  }
+  const labels = {
+    saving: 'Saving...',
+    offline: 'Offline - retrying',
+    retrying: 'Retrying save...'
+  };
+  el.syncStatus.textContent = labels[state.syncStatus] || 'Retrying save...';
+  el.syncStatus.classList.add(state.syncStatus === 'saving' ? 'is-saving' : 'is-offline');
+  show(el.syncStatus);
 }
 
 function updateTimerTick(active) {
@@ -646,10 +818,15 @@ function connectEvents() {
   state.events.addEventListener('state', (event) => {
     applyServerSnapshot(JSON.parse(event.data));
     renderSnapshot();
+    queueBoardSync({ immediate: true });
   });
   state.events.addEventListener('error', () => {
     state.events?.close();
     state.events = null;
+    if (state.localBoardDirty) {
+      setSyncStatus(navigator.onLine === false ? 'offline' : 'retrying');
+      queueBoardSync();
+    }
     setTimeout(connectEvents, 1200);
   });
 }
@@ -662,7 +839,9 @@ async function api(path, { method = 'GET', body } = {}) {
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(payload.error || `Request failed: ${res.status}`);
+    const error = new Error(payload.error || `Request failed: ${res.status}`);
+    error.status = res.status;
+    throw error;
   }
   return payload;
 }
