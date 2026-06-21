@@ -546,6 +546,7 @@ function renderGameActions(snapshot) {
 }
 
 function openHub(tab = 'game') {
+  document.body.classList.add('hub-open');
   show(el.gameHub);
   setHubTab(tab);
 }
@@ -553,6 +554,7 @@ function openHub(tab = 'game') {
 function closeHub() {
   stopReplay();
   stopWatchReplay();
+  document.body.classList.remove('hub-open');
   hide(el.gameHub);
 }
 
