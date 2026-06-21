@@ -7,8 +7,18 @@ const state = {
   playerId: '',
   selected: null,
   snapshot: null,
+  snapshotReceivedAt: 0,
   events: null,
-  timerTick: null
+  timerTick: null,
+  renderedPuzzleKey: '',
+  renderedWatchPuzzleKey: '',
+  renderedBoardKey: '',
+  renderedWatchBoardKey: '',
+  localBoard: null,
+  pendingMoves: new Map(),
+  moveSeq: 0,
+  toastTimer: null,
+  watchingPlayerId: ''
 };
 
 const el = {
@@ -18,6 +28,7 @@ const el = {
   playView: document.querySelector('#playView'),
   scores: document.querySelector('#scores'),
   scoreList: document.querySelector('#scoreList'),
+  closeScores: document.querySelector('#closeScores'),
   difficulty: document.querySelector('#difficulty'),
   createGame: document.querySelector('#createGame'),
   shareUrl: document.querySelector('#shareUrl'),
@@ -30,6 +41,12 @@ const el = {
   numbers: document.querySelector('#numbers'),
   result: document.querySelector('#result'),
   toggleScores: document.querySelector('#toggleScores'),
+  rankIndicator: document.querySelector('#rankIndicator'),
+  toast: document.querySelector('#toast'),
+  watchView: document.querySelector('#watchView'),
+  watchPlayer: document.querySelector('#watchPlayer'),
+  watchBoard: document.querySelector('#watchBoard'),
+  watchProgress: document.querySelector('#watchProgress'),
   finishOverlay: document.querySelector('#finishOverlay'),
   finishMessage: document.querySelector('#finishMessage'),
   dismissFinish: document.querySelector('#dismissFinish')
@@ -88,7 +105,29 @@ el.startGame.addEventListener('click', async () => {
 });
 
 el.toggleScores.addEventListener('click', () => {
-  el.scores.classList.toggle('hidden-local');
+  show(el.scores);
+});
+
+el.closeScores.addEventListener('click', () => {
+  hide(el.scores);
+});
+
+el.scores.addEventListener('click', (event) => {
+  if (event.target === el.scores) {
+    hide(el.scores);
+  }
+});
+
+el.board.addEventListener('click', (event) => {
+  const cell = event.target.closest('.cell');
+  if (!cell || !el.board.contains(cell) || cell.disabled) return;
+  state.selected = Number(cell.dataset.index);
+  updateBoardSelection();
+});
+
+el.watchPlayer.addEventListener('change', () => {
+  state.watchingPlayerId = el.watchPlayer.value;
+  renderWatch();
 });
 
 el.dismissFinish.addEventListener('click', () => {
@@ -103,6 +142,7 @@ async function renderRoute() {
     hide(el.lobbyView, el.playView);
     el.title.textContent = 'Play together';
     renderScores([]);
+    renderRankIndicator([]);
     return;
   }
 
@@ -119,8 +159,35 @@ async function renderRoute() {
 async function loadState() {
   if (!state.code) return;
   const suffix = state.playerId ? `?playerId=${encodeURIComponent(state.playerId)}` : '';
-  state.snapshot = await api(`/api/games/${state.code}${suffix}`);
+  applyServerSnapshot(await api(`/api/games/${state.code}${suffix}`));
   renderSnapshot();
+}
+
+function applyServerSnapshot(snapshot) {
+  state.snapshot = snapshot;
+  state.snapshotReceivedAt = Date.now();
+  reconcilePendingMoves(snapshot.player?.board || null);
+  state.localBoard = snapshot.player?.board ? boardForDisplay(snapshot.player.board) : null;
+}
+
+function reconcilePendingMoves(serverBoard) {
+  if (!serverBoard) {
+    state.pendingMoves.clear();
+    return;
+  }
+  for (const [cell, move] of state.pendingMoves) {
+    if (serverBoard[cell] === move.value) {
+      state.pendingMoves.delete(cell);
+    }
+  }
+}
+
+function boardForDisplay(serverBoard) {
+  const board = serverBoard.slice();
+  for (const [cell, move] of state.pendingMoves) {
+    board[cell] = move.value;
+  }
+  return board;
 }
 
 function renderSnapshot() {
@@ -129,46 +196,76 @@ function renderSnapshot() {
 
   const isHost = Boolean(state.hostToken);
   const hasPlayer = Boolean(snapshot.player);
+  const players = playersForDisplay(snapshot);
   el.title.textContent = snapshot.game.status === 'playing' ? 'Sudoku Friends' : `Lobby ${snapshot.game.code}`;
   el.startGame.classList.toggle('hidden', !isHost || snapshot.game.status !== 'lobby');
   el.waitingText.classList.toggle('hidden', snapshot.game.status !== 'lobby' || isHost);
   document.querySelector('#joinForm').classList.toggle('hidden', hasPlayer);
-  renderScores(snapshot.players);
+  renderScores(players);
+  renderRankIndicator(players);
   maybeShowFinishDialog(snapshot);
   updateTimerTick(snapshot.game.status === 'playing');
 
   if (snapshot.game.status !== 'playing') {
     show(el.lobbyView);
     hide(el.playView);
+    hide(el.rankIndicator, el.watchView);
     return;
   }
 
   hide(el.lobbyView);
   show(el.playView);
-  renderBoard(snapshot.game.puzzle, snapshot.player?.board || snapshot.game.puzzle);
+  renderBoard(snapshot.game.puzzle, state.localBoard || snapshot.player?.board || snapshot.game.puzzle, el.board);
+  renderWatch();
 }
 
-function renderBoard(puzzle, board) {
-  el.board.replaceChildren();
+function renderBoard(puzzle, board, target) {
+  const puzzleKey = puzzle.join('');
+  const keyName = target === el.watchBoard ? 'renderedWatchPuzzleKey' : 'renderedPuzzleKey';
+  const boardKey = board.join('');
+  const boardKeyName = target === el.watchBoard ? 'renderedWatchBoardKey' : 'renderedBoardKey';
+  if (state[keyName] === puzzleKey && state[boardKeyName] === boardKey && target.children.length === 81) {
+    if (target === el.board) {
+      updateBoardSelection();
+    }
+    return;
+  }
+
+  if (state[keyName] !== puzzleKey || target.children.length !== 81) {
+    target.replaceChildren();
+    board.forEach((_, index) => {
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'cell';
+      cell.dataset.index = String(index);
+      target.append(cell);
+    });
+    state[keyName] = puzzleKey;
+  }
+  state[boardKeyName] = boardKey;
+
   board.forEach((value, index) => {
-    const cell = document.createElement('button');
-    cell.type = 'button';
-    cell.className = 'cell';
+    const cell = target.children[index];
     cell.textContent = value === 0 ? '' : String(value);
-    if (puzzle[index] !== 0) {
-      cell.classList.add('given');
-      cell.disabled = true;
-    } else {
-      cell.addEventListener('click', () => {
-        state.selected = index;
-        renderBoard(puzzle, board);
-      });
-    }
-    if (state.selected === index) {
-      cell.classList.add('selected');
-    }
-    el.board.append(cell);
+    cell.disabled = target === el.watchBoard || puzzle[index] !== 0;
+    cell.classList.toggle('given', puzzle[index] !== 0);
+    cell.classList.toggle('selected', target === el.board && state.selected === index);
   });
+  clearInvalidSelection(puzzle);
+}
+
+function updateBoardSelection() {
+  [...el.board.children].forEach((cell) => {
+    cell.classList.toggle('selected', Number(cell.dataset.index) === state.selected);
+  });
+}
+
+function clearInvalidSelection(puzzle) {
+  if (state.selected === null) return;
+  if (!Number.isInteger(state.selected) || puzzle[state.selected] !== 0) {
+    state.selected = null;
+    updateBoardSelection();
+  }
 }
 
 function renderScores(players) {
@@ -216,6 +313,102 @@ function renderScores(players) {
   }
 }
 
+function renderRankIndicator(players) {
+  const currentIndex = players.findIndex((player) => player.id === state.playerId);
+  if (currentIndex === -1) {
+    hide(el.rankIndicator);
+    return;
+  }
+  const current = players[currentIndex];
+  el.rankIndicator.textContent = `${ordinal(currentIndex + 1)} · ${current.points || 0} pts · ${current.progress.percent}%`;
+  show(el.rankIndicator);
+}
+
+function renderWatch() {
+  const snapshot = state.snapshot;
+  const current = snapshot?.players.find((player) => player.id === state.playerId);
+  if (!snapshot?.watch?.canWatch || !current?.correct || !snapshot.game.puzzle) {
+    hide(el.watchView);
+    state.watchingPlayerId = '';
+    return;
+  }
+
+  const watchablePlayers = snapshot.players.filter((player) => player.id !== state.playerId);
+  if (watchablePlayers.length === 0) {
+    hide(el.watchView);
+    return;
+  }
+
+  if (!watchablePlayers.some((player) => player.id === state.watchingPlayerId)) {
+    state.watchingPlayerId = watchablePlayers[0].id;
+  }
+
+  el.watchPlayer.replaceChildren(
+    ...watchablePlayers.map((player) => {
+      const option = document.createElement('option');
+      option.value = player.id;
+      option.textContent = player.name;
+      option.selected = player.id === state.watchingPlayerId;
+      return option;
+    })
+  );
+
+  const board = snapshot.watch.boards.find((watchBoard) => watchBoard.playerId === state.watchingPlayerId);
+  const player = snapshot.players.find((item) => item.id === state.watchingPlayerId);
+  if (!board || !player) {
+    hide(el.watchView);
+    return;
+  }
+
+  renderBoard(snapshot.game.puzzle, board.board, el.watchBoard);
+  el.watchProgress.textContent = `${player.progress.filled}/${player.progress.total} · ${player.progress.percent}%`;
+  show(el.watchView);
+}
+
+function playersForDisplay(snapshot) {
+  const players = snapshot.players.map((player) => ({
+    ...player,
+    progress: { ...player.progress },
+    timer: tickedTimer(player.timer)
+  }));
+  const current = players.find((player) => player.id === state.playerId);
+  if (current && snapshot.game.puzzle && state.localBoard) {
+    current.progress = progressFor(state.localBoard, snapshot.game.puzzle);
+  }
+  return players.sort((left, right) => {
+    if ((right.points || 0) !== (left.points || 0)) return (right.points || 0) - (left.points || 0);
+    if (left.finishRank && right.finishRank) return left.finishRank - right.finishRank;
+    if (left.finishRank) return -1;
+    if (right.finishRank) return 1;
+    return right.progress.percent - left.progress.percent;
+  });
+}
+
+function tickedTimer(timer) {
+  const copy = { ...(timer || { elapsedSeconds: 0, finished: false }) };
+  if (!copy.finished && state.snapshot?.game.status === 'playing' && state.snapshotReceivedAt) {
+    copy.elapsedSeconds += Math.floor((Date.now() - state.snapshotReceivedAt) / 1000);
+  }
+  return copy;
+}
+
+function progressFor(board, puzzle) {
+  const total = puzzle.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
+  const filled = board.reduce((count, value, index) => count + (puzzle[index] === 0 && value !== 0 ? 1 : 0), 0);
+  return {
+    filled,
+    total,
+    percent: total === 0 ? 100 : Math.floor((filled / total) * 100)
+  };
+}
+
+function ordinal(value) {
+  const mod100 = value % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${value}th`;
+  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[value % 10] || 'th';
+  return `${value}${suffix}`;
+}
+
 function metaItem(label, value) {
   const item = document.createElement('span');
   const labelNode = document.createElement('small');
@@ -228,16 +421,44 @@ function metaItem(label, value) {
 
 async function submitValue(value) {
   if (state.selected === null || !state.playerId) return;
-  const res = await api(`/api/games/${state.code}/moves`, {
-    method: 'POST',
-    body: { playerId: state.playerId, cell: state.selected, value }
-  });
-  if (res.complete) {
-    el.result.textContent = res.correct ? 'Solved correctly.' : 'Board is full, but not correct.';
-  } else {
-    el.result.textContent = '';
+  const snapshot = state.snapshot;
+  const puzzle = snapshot?.game.puzzle;
+  if (!snapshot?.player?.board || !puzzle || puzzle[state.selected] !== 0) return;
+
+  const cell = state.selected;
+  const seq = state.moveSeq + 1;
+  const rollbackBoard = (state.localBoard || snapshot.player.board).slice();
+  state.moveSeq = seq;
+  state.pendingMoves.set(cell, { seq, value, rollbackBoard });
+  state.localBoard = rollbackBoard.slice();
+  state.localBoard[cell] = value;
+  el.result.textContent = '';
+  renderSnapshot();
+
+  try {
+    const res = await api(`/api/games/${state.code}/moves`, {
+      method: 'POST',
+      body: { playerId: state.playerId, cell, value }
+    });
+    const pending = state.pendingMoves.get(cell);
+    if (pending?.seq === seq && state.snapshot?.player?.board?.[cell] === value) {
+      state.pendingMoves.delete(cell);
+    }
+    if (seq === state.moveSeq && res.complete) {
+      el.result.textContent = res.correct ? 'Solved correctly.' : 'Board is full, but not correct.';
+    }
+  } catch (error) {
+    const pending = state.pendingMoves.get(cell);
+    if (pending?.seq === seq) {
+      state.pendingMoves.delete(cell);
+      state.localBoard = pending.rollbackBoard.slice();
+      for (const [pendingCell, move] of state.pendingMoves) {
+        state.localBoard[pendingCell] = move.value;
+      }
+      renderSnapshot();
+    }
+    showToast(error.message || 'Move was not saved.');
   }
-  await loadState();
 }
 
 function updateTimerTick(active) {
@@ -246,12 +467,12 @@ function updateTimerTick(active) {
     return;
   }
   if (state.timerTick) return;
-  state.timerTick = setInterval(async () => {
+  state.timerTick = setInterval(() => {
     if (!state.snapshot || state.snapshot.game.status !== 'playing') {
       clearTimerTick();
       return;
     }
-    await loadState();
+    renderSnapshot();
   }, 1000);
 }
 
@@ -324,12 +545,21 @@ async function copyShareUrl() {
   }
 }
 
+function showToast(message) {
+  clearTimeout(state.toastTimer);
+  el.toast.textContent = message;
+  show(el.toast);
+  state.toastTimer = setTimeout(() => {
+    hide(el.toast);
+  }, 2600);
+}
+
 function connectEvents() {
   if (!state.code || state.events) return;
   const suffix = state.playerId ? `?playerId=${encodeURIComponent(state.playerId)}` : '';
   state.events = new EventSource(withBasePath(`/api/games/${state.code}/events${suffix}`));
   state.events.addEventListener('state', (event) => {
-    state.snapshot = JSON.parse(event.data);
+    applyServerSnapshot(JSON.parse(event.data));
     renderSnapshot();
   });
   state.events.addEventListener('error', () => {

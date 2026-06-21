@@ -57,12 +57,37 @@
         <div id="board" class="board" aria-label="Sudoku board"></div>
         <div id="numbers" class="numbers" aria-label="Number buttons"></div>
         <p id="result" class="result"></p>
+        <section id="watchView" class="watch-view hidden" aria-label="Watch players">
+          <div class="watch-controls">
+            <label for="watchPlayer">Watch</label>
+            <select id="watchPlayer"></select>
+          </div>
+          <div class="tv-frame">
+            <div class="tv-screen">
+              <div id="watchBoard" class="board watch-board" aria-label="Watched player board"></div>
+            </div>
+            <div class="tv-controls" aria-hidden="true">
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+          <p id="watchProgress" class="watch-progress"></p>
+        </section>
       </section>
 
-      <aside id="scores" class="scores">
-        <h2>Leaderboard</h2>
-        <div id="scoreList"></div>
+      <div id="rankIndicator" class="rank-indicator hidden"></div>
+
+      <aside id="scores" class="scores hidden" role="dialog" aria-modal="true" aria-labelledby="scoresTitle">
+        <div class="scores-dialog">
+          <div class="scores-header">
+            <h2 id="scoresTitle">Leaderboard</h2>
+            <button id="closeScores" class="icon-button" type="button" title="Close rankings">×</button>
+          </div>
+          <div id="scoreList"></div>
+        </div>
       </aside>
+
+      <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
       <div id="finishOverlay" class="finish-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finishTitle">
         <div class="confetti" aria-hidden="true">

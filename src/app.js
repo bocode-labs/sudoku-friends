@@ -253,6 +253,10 @@ function snapshot(db, code, playerId) {
   const player = playerId
     ? db.prepare('select id, board from players where id = ? and game_id = ?').get(playerId, game.id)
     : null;
+  const canWatch = Boolean(
+    playerId &&
+      db.prepare('select 1 from players where id = ? and game_id = ? and correct = 1').get(playerId, game.id)
+  );
 
   return {
     game: {
@@ -262,7 +266,19 @@ function snapshot(db, code, playerId) {
       puzzle: game.status === 'playing' ? deserialize(game.puzzle) : null
     },
     player: player ? { id: player.id, board: deserialize(player.board) } : null,
-    players
+    players,
+    watch: {
+      canWatch,
+      boards: canWatch
+        ? db
+            .prepare('select id as playerId, board from players where game_id = ? order by joined_at asc')
+            .all(game.id)
+            .map((watchPlayer) => ({
+              playerId: watchPlayer.playerId,
+              board: deserialize(watchPlayer.board)
+            }))
+        : []
+    }
   };
 }
 

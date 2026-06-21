@@ -241,6 +241,104 @@ test('reports correctness only when a player submits a full board', async () => 
   }
 });
 
+test('only correctly finished players can receive watch board snapshots', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const ada = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    const grace = await post(t.app, `/api/games/${code}/players`, { name: 'Grace' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const unfinished = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    assert.equal(unfinished.status, 200);
+    assert.equal(unfinished.body.watch.canWatch, false);
+    assert.deepEqual(unfinished.body.watch.boards, []);
+
+    const graceMove = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: grace.body.player.id,
+      cell: 0,
+      value: SOLUTION[0]
+    });
+    assert.equal(graceMove.status, 200);
+
+    for (let cell = 0; cell < 9; cell += 1) {
+      const move = await post(t.app, `/api/games/${code}/moves`, {
+        playerId: ada.body.player.id,
+        cell,
+        value: SOLUTION[cell]
+      });
+      assert.equal(move.status, 200);
+    }
+
+    const finished = await get(t.app, `/api/games/${code}?playerId=${ada.body.player.id}`);
+    assert.equal(finished.body.watch.canWatch, true);
+    assert.deepEqual(
+      finished.body.watch.boards.find((board) => board.playerId === grace.body.player.id)?.board.slice(0, 9),
+      [SOLUTION[0], 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+
+    const graceSnapshot = await get(t.app, `/api/games/${code}?playerId=${grace.body.player.id}`);
+    assert.equal(graceSnapshot.body.watch.canWatch, false);
+    assert.deepEqual(graceSnapshot.body.watch.boards, []);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('delete moves accept numeric zero and string zero values', async () => {
+  const t = makeTestApp();
+  try {
+    const created = await post(t.app, '/api/games', { difficulty: 'easy' });
+    const code = created.body.game.code;
+    const joined = await post(t.app, `/api/games/${code}/players`, { name: 'Ada' });
+    replacePuzzle(t.db, code);
+
+    const start = await post(t.app, `/api/games/${code}/start`, {
+      hostToken: created.body.game.hostToken
+    });
+    assert.equal(start.status, 200);
+
+    const setMove = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: joined.body.player.id,
+      cell: 0,
+      value: SOLUTION[0]
+    });
+    assert.equal(setMove.status, 200);
+    assert.equal(setMove.body.progress.filled, 1);
+
+    const numericDelete = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: joined.body.player.id,
+      cell: 0,
+      value: 0
+    });
+    assert.equal(numericDelete.status, 200);
+    assert.equal(numericDelete.body.progress.filled, 0);
+
+    const secondSetMove = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: joined.body.player.id,
+      cell: 0,
+      value: SOLUTION[0]
+    });
+    assert.equal(secondSetMove.status, 200);
+
+    const stringDelete = await post(t.app, `/api/games/${code}/moves`, {
+      playerId: joined.body.player.id,
+      cell: 0,
+      value: '0'
+    });
+    assert.equal(stringDelete.status, 200);
+    assert.equal(stringDelete.body.progress.filled, 0);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('snapshots report editable-cell percentages, elapsed timers, finish points, and milestone awards', async () => {
   const t = makeTestApp();
   try {
