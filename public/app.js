@@ -194,9 +194,16 @@ async function copyShareUrl() {
   }
 
   if (!copied) {
+    el.shareUrl.removeAttribute('readonly');
     el.shareUrl.focus();
     el.shareUrl.select();
-    copied = document.execCommand('copy');
+    el.shareUrl.setSelectionRange(0, url.length);
+    try {
+      document.execCommand('copy');
+      copied = true;
+    } finally {
+      el.shareUrl.setAttribute('readonly', '');
+    }
   }
 
   if (copied) {
