@@ -1042,6 +1042,11 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.detail-tv-card .tv-frame {
+  width: min(100%, 360px);
+  justify-self: center;
+}
+
 .confirm-overlay {
   position: fixed;
   inset: 0;
